@@ -165,6 +165,12 @@ async def analyze_video(file: fastapi.UploadFile):
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+        resized_width = width // 2
+        resized_height = height // 2
+
+        # cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset to first frame
+        # cap.set(cv2.CAP_PROP_FRAME_WIDTH, resized_width)
+        # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resized_height)
         # Initialize tracker
         tracker = BasketballTracker()
 
