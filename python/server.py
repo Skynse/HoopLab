@@ -152,7 +152,8 @@ def generate_data(video_path: str):
     resized_width = width // 2
     resized_height = height // 2
     video_info = {
-        "video_info": {
+        "type": "video_info",
+        "data": {
             "fps": fps,
             "total_frames": frame_count,
             "duration": frame_count / fps if fps > 0 else 0,
@@ -196,9 +197,12 @@ def generate_data(video_path: str):
 
             # Add frame info to results
             frame_data = {
+                "type": "frame_data",
+                'data': {
                 'frame_number': frame_number,
                 'timestamp': timestamp,
                 'detections': tracked_objects
+                }
             }
             all_detections.append(frame_data)
             yield json.dumps(frame_data) + "\n"
@@ -237,7 +241,7 @@ async def analyze_video(file: fastapi.UploadFile):
         if not cap.isOpened():
             return {"error": f"Could not open video file: {video_path}"}
 
-        return StreamingResponse(generate_data(video_path), media_type="application/x-ndjson")
+        return StreamingResponse(generate_data(video_path), media_type="application/x-ndjson",  headers={"Cache-Control": "no-cache"})
 
     except Exception as e:
         # Clean up temp file in case of error
