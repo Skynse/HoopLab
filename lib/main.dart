@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:hooplab/pages/camera.dart';
+import 'package:hooplab/pages/method_selector.dart';
 
 void main() {
   runApp(App());
@@ -10,6 +11,6 @@ class App extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(home: CameraPage());
+    return MaterialApp(home: MethodSelector());
   }
 }

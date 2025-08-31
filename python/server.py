@@ -4,6 +4,8 @@ import fastapi
 import numpy as np
 from scipy.spatial.distance import cdist
 import os
+from fastapi.responses import StreamingResponse
+import json
 
 app = fastapi.FastAPI()
 model = YOLO("best.pt")  # Load your trained basketball model
@@ -138,45 +140,33 @@ class BasketballTracker:
                 })
 
         return matched_tracks
+    
+def generate_data(video_path: str):
+# Get video properties
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-@app.post("/analyze")
-async def analyze_video(file: fastapi.UploadFile):
-    video_path = f"temp_{file.filename}"
+    resized_width = width // 2
+    resized_height = height // 2
+    video_info = {
+        "video_info": {
+            "fps": fps,
+            "total_frames": frame_count,
+            "duration": frame_count / fps if fps > 0 else 0,
+            "width": width,
+            "height": height
+        },
+    }
+
+    yield json.dumps(video_info) + "\n"
+    tracker = BasketballTracker()
+
+    all_detections = []
+    frame_number = 0
     try:
-        # Save uploaded file
-        with open(video_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
-
-        # Verify file was saved correctly
-        if not os.path.exists(video_path):
-            return {"error": f"File {video_path} was not saved."}
-        if os.path.getsize(video_path) == 0:
-            return {"error": f"File {video_path} is empty."}
-
-        # Open video
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            return {"error": f"Could not open video file: {video_path}"}
-
-        # Get video properties
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-        resized_width = width // 2
-        resized_height = height // 2
-
-        # cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset to first frame
-        # cap.set(cv2.CAP_PROP_FRAME_WIDTH, resized_width)
-        # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resized_height)
-        # Initialize tracker
-        tracker = BasketballTracker()
-
-        all_detections = []
-        frame_number = 0
-
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -211,25 +201,43 @@ async def analyze_video(file: fastapi.UploadFile):
                 'detections': tracked_objects
             }
             all_detections.append(frame_data)
-
+            yield json.dumps(frame_data) + "\n"
             frame_number += 1
-
+    except:
+        yield json.dumps({"error": "An error occurred during processing."}) + "\n"
+    finally:
         cap.release()
-
-        # Clean up temp file
-        if os.path.exists(video_path):
+        if (os.path.exists(video_path)):
             os.remove(video_path)
 
-        return {
-            "video_info": {
-                "fps": fps,
-                "total_frames": frame_count,
-                "duration": frame_count / fps if fps > 0 else 0,
-                "width": width,
-                "height": height
-            },
-            "tracking_results": all_detections
-        }
+    # Clean up temp file
+    if os.path.exists(video_path):
+        os.remove(video_path)
+
+
+
+
+@app.post("/analyze")
+async def analyze_video(file: fastapi.UploadFile):
+    video_path = f"temp_{file.filename}"
+    try:
+        # Save uploaded file
+        with open(video_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+
+        # Verify file was saved correctly
+        if not os.path.exists(video_path):
+            return {"error": f"File {video_path} was not saved."}
+        if os.path.getsize(video_path) == 0:
+            return {"error": f"File {video_path} is empty."}
+
+        # Open video
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return {"error": f"Could not open video file: {video_path}"}
+
+        return StreamingResponse(generate_data(video_path), media_type="application/x-ndjson")
 
     except Exception as e:
         # Clean up temp file in case of error

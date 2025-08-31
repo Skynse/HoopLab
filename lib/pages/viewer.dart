@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
@@ -19,7 +20,7 @@ class _ViewerPageState extends State<ViewerPage> {
   Timer? frameTimer;
 
   void initializeVideoPlayer() {
-    videoController = VideoPlayerController.asset("assets/video.mp4")
+    videoController = VideoPlayerController.file(File(widget.videoPath!))
       ..initialize().then((_) {
         setState(() {});
       });
@@ -45,36 +46,41 @@ class _ViewerPageState extends State<ViewerPage> {
     if (!videoController.value.isInitialized) {
       return Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    return Scaffold(
+    return SafeArea(child: Scaffold(
       appBar: AppBar(title: Text("Viewer")),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            AspectRatio(
-              aspectRatio: videoController.value.aspectRatio,
-              child: VideoPlayer(videoController),
-            ),
-            SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: () {
-                if (isAnalyzing) {
-                  videoController.pause();
-                  setState(() {
-                    isAnalyzing = false;
-                  });
-                } else {
-                  AnalyzeFrames();
-                  setState(() {
-                    isAnalyzing = true;
-                  });
-                }
-              },
-              child: Text(isAnalyzing ? "Stop Analysis" : "Start Analysis"),
-            ),
-          ],
+      body: Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+        Flexible(
+          flex: 3,
+          child: AspectRatio(
+          aspectRatio: videoController.value.aspectRatio,
+          child: VideoPlayer(videoController),
+          ),
         ),
+        SizedBox(height: 20),
+        ElevatedButton(
+          onPressed: () {
+          if (isAnalyzing) {
+            videoController.pause();
+            setState(() {
+            isAnalyzing = false;
+            });
+          } else {
+            AnalyzeFrames();
+            setState(() {
+            isAnalyzing = true;
+            });
+          }
+          },
+          child: Text(isAnalyzing ? "Stop Analysis" : "Start Analysis"),
+        ),
+        ],
       ),
+      ),
+    ),
     );
   }
 }

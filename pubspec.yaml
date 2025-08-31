@@ -38,6 +38,7 @@ dependencies:
   camerawesome: ^2.5.0
 
   video_player: ^2.10.0
+  image_picker: ^1.2.0
 
 dev_dependencies:
   flutter_test:
