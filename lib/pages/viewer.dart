@@ -113,11 +113,11 @@ class _ViewerPageState extends State<ViewerPage> {
                     child: AspectRatio(
                       aspectRatio: videoController.value.aspectRatio,
                       child: Stack(children: [
+                        VideoPlayer(videoController),
                         CustomPaint(
                           painter: DetectionPainter(clip.frames.where((frame) => frame.frameNumber == curFrame).toList()),
-                          child: Container(),
                         ),
-                        VideoPlayer(videoController,)]),
+                      ]),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -343,11 +343,12 @@ class DetectionPainter extends CustomPainter {
 
     for (var frame in frames) {
       for (var detection in frame.detections) {
-        Rect rect = Rect.fromLTRB(detection.bbox.centerX - detection.bbox.width / 2,
-            detection.bbox.centerY - detection.bbox.height / 2,
-            detection.bbox.centerX + detection.bbox.width / 2,
-            detection.bbox.centerY + detection.bbox.height / 2);
-              canvas.drawRect(rect, paint);
+      final rect = Rect.fromLTRB(
+        (detection.bbox.x1 ) ,
+        (detection.bbox.y1) ,
+        (detection.bbox.x2 ) ,
+        (detection.bbox.y2 ) ,
+      );
       }
 
       
