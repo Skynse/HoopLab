@@ -1,14 +1,14 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
 import 'package:video_player/video_player.dart';
-import 'package:http/http.dart' as http;
+import 'package:ultralytics_yolo/ultralytics_yolo.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 
 class ViewerPage extends StatefulWidget {
-  String? videoPath;
+  final String? videoPath;
   ViewerPage({super.key, this.videoPath});
 
   @override
@@ -19,45 +19,17 @@ class _ViewerPageState extends State<ViewerPage> {
   bool isAnalyzing = false;
   late Clip clip;
   late VideoPlayerController videoController;
-  Timer? frameTimer;
   StreamSubscription? analysisSubscription;
+  YOLO? yoloModel;
 
   int curFrame = 0;
-  double videoDuration = 0.0;
   bool seeking = false;
-
-  Stream<Map<String, dynamic>>? fetchData() {
-    var endpoint = Uri.parse('http://192.168.1.10:8800/analyze');
-    //var endpoint = Uri.parse('http://10.0.0.134:8800/analyze');
-    File videoFile = File(widget.videoPath!);
-    var request = http.MultipartRequest('POST', endpoint);
-    request.files.add(
-      http.MultipartFile(
-        'file',
-        videoFile.readAsBytes().asStream(),
-        videoFile.lengthSync(),
-        filename: videoFile.path.split("/").last,
-      ),
-    );
-    var response = request.send();
-    return response.asStream().asyncExpand((response) {
-      return response.stream
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .map((line) => json.decode(line) as Map<String, dynamic>);
-    });
-  }
-
-  void initializeVideoPlayer() {
-    videoController = VideoPlayerController.file(File(widget.videoPath!))
-      ..initialize().then((_) {
-        setState(() {});
-      });
-  }
 
   @override
   void initState() {
+    super.initState();
     initializeVideoPlayer();
+    initializeYoloModel();
     clip = Clip(
       id: "1",
       name: "Test Clip",
@@ -76,19 +48,126 @@ class _ViewerPageState extends State<ViewerPage> {
         });
       }
     });
-    super.initState();
+  }
+
+  void initializeVideoPlayer() {
+    videoController = VideoPlayerController.file(File(widget.videoPath!))
+      ..initialize().then((_) {
+        setState(() {});
+      });
+  }
+
+  void initializeYoloModel() async {
+    try {
+      yoloModel = YOLO(
+        useGpu: true,
+        modelPath: 'best_float16.tflite', // Remove 'assets/' prefix
+        task: YOLOTask.detect,
+      );
+
+      await yoloModel!.loadModel();
+      debugPrint('YOLO model loaded successfully');
+    } catch (e) {
+      debugPrint('Error initializing YOLO model: $e');
+    }
   }
 
   @override
   void dispose() {
     analysisSubscription?.cancel();
     videoController.dispose();
-    frameTimer?.cancel();
     super.dispose();
   }
 
-  void AnalyzeFrames() async {
-    videoController.play();
+  Stream<FrameData> analyzeVideoFrames() async* {
+    if (yoloModel == null) {
+      return;
+    }
+
+    // Get video info first
+    final videoDuration = videoController.value.duration.inMilliseconds;
+    final videoInfo = VideoInfo(
+      fps: 30, // Assuming 30 FPS; ideally, extract this from the video metadata
+      totalFrames: (videoDuration / 1000 * 30)
+          .toInt(), // Estimate based on 30 FPS
+      duration: videoDuration / 1000.0,
+      width: videoController.value.size.width.toInt(),
+      height: videoController.value.size.height.toInt(),
+    );
+
+    // Update clip video info
+    clip.videoInfo = videoInfo;
+
+    // Extract and analyze frames
+    final totalFrames = videoInfo.totalFrames;
+    final frameInterval = 1000 ~/ videoInfo.fps; // milliseconds per frame
+
+    for (int frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
+      try {
+        final timestamp = frameIndex * frameInterval;
+
+        // Extract frame using video_thumbnail
+        final uint8list = await VideoThumbnail.thumbnailData(
+          video: widget.videoPath!,
+          imageFormat: ImageFormat.JPEG, // JPEG is faster than PNG
+          timeMs: timestamp,
+          quality: 75, // Reduce from 100 to 75 (still good quality)
+          maxWidth: 640, // Limit max width for faster inference
+          maxHeight: 640, // Limit max height for faster inference
+        );
+
+        if (uint8list != null) {
+          // Run YOLO inference on the frame
+          final results = await yoloModel!.predict(uint8list);
+
+          // Convert YOLO results to our format
+          final frameDetections = <Detection>[];
+
+          // Handle the results - cast to dynamic first to avoid type inference issues
+          final dynamic dynamicResults = results;
+
+          try {
+            if (dynamicResults is List) {
+              for (final result in dynamicResults) {
+                try {
+                  // Convert each YOLO result to our Detection format
+                  final detection = Detection(
+                    trackId: 0, // YOLO doesn't provide tracking by default
+                    bbox: BoundingBox(
+                      x1: result.box?.x1?.toDouble() ?? 0.0,
+                      y1: result.box?.y1?.toDouble() ?? 0.0,
+                      x2: result.box?.x2?.toDouble() ?? 0.0,
+                      y2: result.box?.y2?.toDouble() ?? 0.0,
+                    ),
+                    confidence: result.box?.conf?.toDouble() ?? 0.0,
+                    timestamp: timestamp / 1000.0,
+                  );
+                  frameDetections.add(detection);
+                } catch (e) {
+                  debugPrint('Error processing YOLO result: $e');
+                }
+              }
+            } else {
+              debugPrint('YOLO results format: ${dynamicResults.runtimeType}');
+              debugPrint('YOLO results content: $dynamicResults');
+            }
+          } catch (e) {
+            debugPrint('Error processing YOLO results: $e');
+          }
+
+          final frameData = FrameData(
+            frameNumber: frameIndex,
+            timestamp: timestamp / 1000.0,
+            detections: frameDetections,
+          );
+
+          yield frameData;
+        }
+      } catch (e) {
+        debugPrint('Error processing frame $frameIndex: $e');
+        // Continue with next frame
+      }
+    }
   }
 
   @override
@@ -112,17 +191,18 @@ class _ViewerPageState extends State<ViewerPage> {
                     flex: 3,
                     child: AspectRatio(
                       aspectRatio: videoController.value.aspectRatio,
-                      child: Stack(children: [
-                        VideoPlayer(videoController),
-                        CustomPaint(
-                          painter: DetectionPainter(clip.frames),
-                        ),
-                      ]),
+                      child: Stack(
+                        children: [
+                          VideoPlayer(videoController),
+                          CustomPaint(
+                            painter: DetectionPainter(clip.frames, curFrame),
+                            size: Size.infinite,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(height: 20),
-
-                  const SizedBox(height: 10),
 
                   ElevatedButton(
                     onPressed: () {
@@ -136,42 +216,23 @@ class _ViewerPageState extends State<ViewerPage> {
                         // Start analysis
                         setState(() {
                           isAnalyzing = true;
-                          clip.frames.clear(); // Clear previous results
+                          clip.frames.clear();
                         });
 
-                        analysisSubscription = fetchData()?.listen(
-                          (data) {
-                            if (data['type'] == "video_info") {
-                              setState(() {
-                                clip.videoInfo = VideoInfo.fromJson(
-                                  data['data'],
-                                );
-                              });
-                            }
-
-                            if (data['type'] == "frame_data") {
-                              try {
-                                FrameData frame = FrameData.fromJson(
-                                  data['data'],
-                                );
-                                setState(() {
-                                  clip.frames.add(frame);
-                                });
-                              } catch (e) {
-                                print('Error parsing frame data: $e');
-                              }
-                            }
-                            ;
+                        analysisSubscription = analyzeVideoFrames().listen(
+                          (frameData) {
+                            setState(() {
+                              clip.frames.add(frameData);
+                            });
                           },
-
                           onError: (error) {
-                            print('Analysis error: $error');
+                            debugPrint('Analysis error: $error');
                             setState(() {
                               isAnalyzing = false;
                             });
                           },
                           onDone: () {
-                            print('Analysis complete');
+                            debugPrint('Analysis complete');
                             setState(() {
                               isAnalyzing = false;
                             });
@@ -272,7 +333,7 @@ class _ViewerPageState extends State<ViewerPage> {
             // Analysis overlay
             if (isAnalyzing)
               Container(
-                color: Colors.black.withOpacity(0.7),
+                color: Colors.black.withValues(alpha: 0.7),
                 child: Center(
                   child: Card(
                     margin: const EdgeInsets.all(32.0),
@@ -332,32 +393,58 @@ class _ViewerPageState extends State<ViewerPage> {
 }
 
 class DetectionPainter extends CustomPainter {
-  late final List<FrameData> frames;
-  DetectionPainter(this.frames);
+  final List<FrameData> frames;
+  final int currentFrame;
+
+  DetectionPainter(this.frames, this.currentFrame);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = Colors.red;
-    paint.strokeCap = StrokeCap.round;
-    paint.strokeWidth = 3.0;
+    final paint = Paint()
+      ..color = Colors.red
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 3.0
+      ..style = PaintingStyle.stroke;
 
-    for (var frame in frames) {
-      for (var detection in frame.detections) {
-      final rect = Rect.fromLTRB(
-        (detection.bbox.x1 ) ,
-        (detection.bbox.y1) ,
-        (detection.bbox.x2 ) ,
-        (detection.bbox.y2 ) ,
-      );
+    // Find the frame data for the current frame
+    final frameData = frames.firstWhere(
+      (frame) => frame.frameNumber == currentFrame,
+      orElse: () => FrameData(frameNumber: -1, timestamp: 0, detections: []),
+    );
+
+    if (frameData.frameNumber != -1) {
+      for (var detection in frameData.detections) {
+        final rect = Rect.fromLTRB(
+          detection.bbox.x1,
+          detection.bbox.y1,
+          detection.bbox.x2,
+          detection.bbox.y2,
+        );
+        canvas.drawRect(rect, paint);
+
+        // Draw confidence score
+        final textPainter = TextPainter(
+          text: TextSpan(
+            text: '${(detection.confidence * 100).toInt()}%',
+            style: const TextStyle(
+              color: Colors.red,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+        textPainter.paint(
+          canvas,
+          Offset(detection.bbox.x1, detection.bbox.y1 - 15),
+        );
       }
-
-      
     }
   }
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    // TODO: implement shouldRepaint
     return true;
   }
 }

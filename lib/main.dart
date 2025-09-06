@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:hooplab/pages/camera.dart';
+
 import 'package:hooplab/pages/method_selector.dart';
 
 void main() {

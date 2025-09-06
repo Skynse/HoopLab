@@ -63,63 +63,75 @@ class DetectionPainter extends CustomPainter {
     _drawCurrentDetections(canvas, size, scaleX, scaleY, offsetX, offsetY);
   }
 
-  void _drawTrajectories(Canvas canvas, double scaleX, double scaleY, double offsetX, double offsetY) {
+  void _drawTrajectories(
+    Canvas canvas,
+    double scaleX,
+    double scaleY,
+    double offsetX,
+    double offsetY,
+  ) {
     // Group detections by track ID
     Map<int, List<Offset>> trajectories = {};
-    
+
     // Collect all detection positions for each track
     for (final frame in allFrames) {
-      if (frame.frameNumber > currentFrame) continue; // Only show past and current
-      
+      if (frame.frameNumber > currentFrame)
+        continue; // Only show past and current
+
       for (final detection in frame.detections) {
         final trackId = detection.trackId;
         final centerX = (detection.bbox.centerX * scaleX) + offsetX;
         final centerY = (detection.bbox.centerY * scaleY) + offsetY;
-        
+
         trajectories.putIfAbsent(trackId, () => []);
         trajectories[trackId]!.add(Offset(centerX, centerY));
       }
     }
-    
+
     // Draw trajectory lines for each track
     for (final entry in trajectories.entries) {
       final trackId = entry.key;
       final points = entry.value;
-      
+
       if (points.length < 2) continue; // Need at least 2 points to draw a line
-      
+
       final color = _getTrackColor(trackId);
       final trajectoryPaint = Paint()
         ..color = color.withOpacity(0.6)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.0;
-      
+
       // Draw lines between consecutive points
       for (int i = 0; i < points.length - 1; i++) {
         canvas.drawLine(points[i], points[i + 1], trajectoryPaint);
       }
-      
+
       // Draw small circles at each trajectory point
       final pointPaint = Paint()
         ..color = color.withOpacity(0.4)
         ..style = PaintingStyle.fill;
-      
+
       for (final point in points) {
         canvas.drawCircle(point, 2, pointPaint);
       }
     }
   }
 
-  void _drawCurrentDetections(Canvas canvas, Size size, double scaleX, double scaleY, double offsetX, double offsetY) {
+  void _drawCurrentDetections(
+    Canvas canvas,
+    Size size,
+    double scaleX,
+    double scaleY,
+    double offsetX,
+    double offsetY,
+  ) {
     if (detections.isEmpty) return;
 
     final paint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3.0;
 
-    final textPainter = TextPainter(
-      textDirection: TextDirection.ltr,
-    );
+    final textPainter = TextPainter(textDirection: TextDirection.ltr);
 
     for (int i = 0; i < detections.length; i++) {
       final detection = detections[i];
@@ -140,7 +152,8 @@ class DetectionPainter extends CustomPainter {
       canvas.drawRect(rect, paint);
 
       // Draw confidence and track ID
-      final text = '🏀 ${detection.trackId} (${(detection.confidence * 100).toStringAsFixed(0)}%)';
+      final text =
+          '🏀 ${detection.trackId} (${(detection.confidence * 100).toStringAsFixed(0)}%)';
       textPainter.text = TextSpan(
         text: text,
         style: TextStyle(
@@ -155,7 +168,10 @@ class DetectionPainter extends CustomPainter {
       // Position text above the bounding box
       final textOffset = Offset(
         rect.left,
-        (rect.top - textPainter.height - 4).clamp(0.0, size.height - textPainter.height),
+        (rect.top - textPainter.height - 4).clamp(
+          0.0,
+          size.height - textPainter.height,
+        ),
       );
       textPainter.paint(canvas, textOffset);
 
@@ -164,7 +180,7 @@ class DetectionPainter extends CustomPainter {
         ..color = color
         ..style = PaintingStyle.fill;
       canvas.drawCircle(rect.center, 5, centerPaint);
-      
+
       // Draw white outline on center point for better visibility
       final outlinePaint = Paint()
         ..color = Colors.white
@@ -191,12 +207,12 @@ class DetectionPainter extends CustomPainter {
   @override
   bool shouldRepaint(DetectionPainter oldDelegate) {
     return detections != oldDelegate.detections ||
-           videoSize != oldDelegate.videoSize ||
-           widgetSize != oldDelegate.widgetSize ||
-           aspectRatio != oldDelegate.aspectRatio ||
-           allFrames != oldDelegate.allFrames ||
-           currentFrame != oldDelegate.currentFrame ||
-           showTrajectories != oldDelegate.showTrajectories;
+        videoSize != oldDelegate.videoSize ||
+        widgetSize != oldDelegate.widgetSize ||
+        aspectRatio != oldDelegate.aspectRatio ||
+        allFrames != oldDelegate.allFrames ||
+        currentFrame != oldDelegate.currentFrame ||
+        showTrajectories != oldDelegate.showTrajectories;
   }
 }
 
@@ -287,28 +303,20 @@ class _ViewerPageState extends State<ViewerPage> {
 
   // Get detections for the current frame
   List<Detection> getCurrentFrameDetections() {
-    final frameData = clip.frames.where((frame) => frame.frameNumber == curFrame).firstOrNull;
-    final detections = frameData?.detections.whereType<Detection>().toList() ?? [];
-    print('Current frame: $curFrame, Found frame data: ${frameData != null}, Detections: ${detections.length}');
+    final frameData = clip.frames
+        .where((frame) => frame.frameNumber == curFrame)
+        .firstOrNull;
+    final detections =
+        frameData?.detections.whereType<Detection>().toList() ?? [];
+    print(
+      'Current frame: $curFrame, Found frame data: ${frameData != null}, Detections: ${detections.length}',
+    );
     if (frameData != null) {
-      print('Frame ${frameData.frameNumber} has ${frameData.detections.length} raw detections');
+      print(
+        'Frame ${frameData.frameNumber} has ${frameData.detections.length} raw detections',
+      );
     }
     return detections;
-  }
-
-  // Get color for track ID (same as painter)
-  Color _getTrackColor(int trackId) {
-    final colors = [
-      Colors.red,
-      Colors.blue,
-      Colors.green,
-      Colors.orange,
-      Colors.purple,
-      Colors.cyan,
-      Colors.pink,
-      Colors.yellow,
-    ];
-    return colors[trackId % colors.length];
   }
 
   @override
@@ -346,7 +354,8 @@ class _ViewerPageState extends State<ViewerPage> {
                                 ),
                                 widgetSize: Size(
                                   MediaQuery.of(context).size.width - 32,
-                                  (MediaQuery.of(context).size.width - 32) / videoController.value.aspectRatio,
+                                  (MediaQuery.of(context).size.width - 32) /
+                                      videoController.value.aspectRatio,
                                 ),
                                 aspectRatio: videoController.value.aspectRatio,
                                 allFrames: clip.frames,
@@ -374,8 +383,12 @@ class _ViewerPageState extends State<ViewerPage> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text('Frame: $curFrame / ${clip.videoInfo!.totalFrames}'),
-                              Text('Detections: ${getCurrentFrameDetections().length}'),
+                              Text(
+                                'Frame: $curFrame / ${clip.videoInfo!.totalFrames}',
+                              ),
+                              Text(
+                                'Detections: ${getCurrentFrameDetections().length}',
+                              ),
                             ],
                           ),
                           const SizedBox(height: 8),
@@ -383,20 +396,29 @@ class _ViewerPageState extends State<ViewerPage> {
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                             children: [
                               ElevatedButton.icon(
-                                onPressed: curFrame > 0 ? () {
-                                  setState(() {
-                                    seeking = true;
-                                    curFrame = curFrame - 1;
-                                  });
-                                  final position = Duration(
-                                    milliseconds: (curFrame / (clip.videoInfo?.fps ?? 30) * 1000).toInt(),
-                                  );
-                                  videoController.seekTo(position).then((_) {
-                                    setState(() {
-                                      seeking = false;
-                                    });
-                                  });
-                                } : null,
+                                onPressed: curFrame > 0
+                                    ? () {
+                                        setState(() {
+                                          seeking = true;
+                                          curFrame = curFrame - 1;
+                                        });
+                                        final position = Duration(
+                                          milliseconds:
+                                              (curFrame /
+                                                      (clip.videoInfo?.fps ??
+                                                          30) *
+                                                      1000)
+                                                  .toInt(),
+                                        );
+                                        videoController.seekTo(position).then((
+                                          _,
+                                        ) {
+                                          setState(() {
+                                            seeking = false;
+                                          });
+                                        });
+                                      }
+                                    : null,
                                 icon: const Icon(Icons.skip_previous),
                                 label: const Text('Prev'),
                               ),
@@ -409,24 +431,42 @@ class _ViewerPageState extends State<ViewerPage> {
                                   }
                                   setState(() {});
                                 },
-                                icon: Icon(videoController.value.isPlaying ? Icons.pause : Icons.play_arrow),
-                                label: Text(videoController.value.isPlaying ? 'Pause' : 'Play'),
+                                icon: Icon(
+                                  videoController.value.isPlaying
+                                      ? Icons.pause
+                                      : Icons.play_arrow,
+                                ),
+                                label: Text(
+                                  videoController.value.isPlaying
+                                      ? 'Pause'
+                                      : 'Play',
+                                ),
                               ),
                               ElevatedButton.icon(
-                                onPressed: curFrame < clip.videoInfo!.totalFrames - 1 ? () {
-                                  setState(() {
-                                    seeking = true;
-                                    curFrame = curFrame + 1;
-                                  });
-                                  final position = Duration(
-                                    milliseconds: (curFrame / (clip.videoInfo?.fps ?? 30) * 1000).toInt(),
-                                  );
-                                  videoController.seekTo(position).then((_) {
-                                    setState(() {
-                                      seeking = false;
-                                    });
-                                  });
-                                } : null,
+                                onPressed:
+                                    curFrame < clip.videoInfo!.totalFrames - 1
+                                    ? () {
+                                        setState(() {
+                                          seeking = true;
+                                          curFrame = curFrame + 1;
+                                        });
+                                        final position = Duration(
+                                          milliseconds:
+                                              (curFrame /
+                                                      (clip.videoInfo?.fps ??
+                                                          30) *
+                                                      1000)
+                                                  .toInt(),
+                                        );
+                                        videoController.seekTo(position).then((
+                                          _,
+                                        ) {
+                                          setState(() {
+                                            seeking = false;
+                                          });
+                                        });
+                                      }
+                                    : null,
                                 icon: const Icon(Icons.skip_next),
                                 label: const Text('Next'),
                               ),
@@ -466,11 +506,14 @@ class _ViewerPageState extends State<ViewerPage> {
                             if (data['type'] == "frame_data") {
                               try {
                                 // The frame data is nested under 'data' key
-                                Map<String, dynamic> frameData = data['data'] as Map<String, dynamic>;
-                                
+                                Map<String, dynamic> frameData =
+                                    data['data'] as Map<String, dynamic>;
+
                                 print('Parsing frame data: $frameData');
                                 FrameData frame = FrameData.fromJson(frameData);
-                                print('Parsed frame ${frame.frameNumber} with ${frame.detections.length} detections');
+                                print(
+                                  'Parsed frame ${frame.frameNumber} with ${frame.detections.length} detections',
+                                );
                                 setState(() {
                                   clip.frames.add(frame);
                                 });
@@ -511,68 +554,104 @@ class _ViewerPageState extends State<ViewerPage> {
                         showTrajectories = !showTrajectories;
                       });
                     },
-                    icon: Icon(showTrajectories ? Icons.timeline : Icons.timeline_outlined),
-                    label: Text(showTrajectories ? 'Hide Trajectories' : 'Show Trajectories'),
+                    icon: Icon(
+                      showTrajectories
+                          ? Icons.timeline
+                          : Icons.timeline_outlined,
+                    ),
+                    label: Text(
+                      showTrajectories
+                          ? 'Hide Trajectories'
+                          : 'Show Trajectories',
+                    ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: showTrajectories ? Colors.blue.withOpacity(0.1) : null,
+                      backgroundColor: showTrajectories
+                          ? Colors.blue.withOpacity(0.1)
+                          : null,
                     ),
                   ),
 
                   const SizedBox(height: 10),
 
-                  clip.videoInfo != null ?
-                  clip.videoInfo!.totalFrames > 0 ? 
-                  Column(
-                    children: [
-                      Slider(
-                        value: curFrame.toDouble().clamp(0, clip.videoInfo!.totalFrames - 1).toDouble(),
-                        min: 0,
-                        max: clip.videoInfo!.totalFrames.toDouble(),
-                        divisions: clip.videoInfo!.totalFrames,
-                        label: 'Frame $curFrame',
-                        onChangeStart: (value) {
-                          seeking = true;
-                        },
-                        onChanged: (value) {
-                          setState(() {
-                            curFrame = value.toInt();
-                          });
-                        },
-                        onChangeEnd: (value) {
-                          final position = Duration(
-                              milliseconds:
-                                  (value / (clip.videoInfo?.fps ?? 30) * 1000)
-                                      .toInt());
-                          videoController.seekTo(position);
-                          seeking = false;
-                        },
-                      ),
-                      // Detection markers overlay
-                      if (clip.frames.isNotEmpty)
-                        Container(
-                          height: 20,
-                          margin: const EdgeInsets.symmetric(horizontal: 24),
-                          child: Stack(
-                            children: clip.frames
-                                .where((frame) => frame.detections.isNotEmpty)
-                                .map((frame) {
-                              double position = (frame.frameNumber / clip.videoInfo!.totalFrames) * 
-                                  (MediaQuery.of(context).size.width - 48);
-                              return Positioned(
-                                left: position,
-                                child: Container(
-                                  width: 2,
-                                  height: 20,
-                                  color: Colors.red,
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                      Text(
-                          'Frame: $curFrame / ${clip.videoInfo?.totalFrames ?? 0}'),
-                    ],
-                  ) : Container() : Container(),
+                  clip.videoInfo != null
+                      ? clip.videoInfo!.totalFrames > 0
+                            ? Column(
+                                children: [
+                                  Slider(
+                                    value: curFrame
+                                        .toDouble()
+                                        .clamp(
+                                          0,
+                                          clip.videoInfo!.totalFrames - 1,
+                                        )
+                                        .toDouble(),
+                                    min: 0,
+                                    max: clip.videoInfo!.totalFrames.toDouble(),
+                                    divisions: clip.videoInfo!.totalFrames,
+                                    label: 'Frame $curFrame',
+                                    onChangeStart: (value) {
+                                      seeking = true;
+                                    },
+                                    onChanged: (value) {
+                                      setState(() {
+                                        curFrame = value.toInt();
+                                      });
+                                    },
+                                    onChangeEnd: (value) {
+                                      final position = Duration(
+                                        milliseconds:
+                                            (value /
+                                                    (clip.videoInfo?.fps ??
+                                                        30) *
+                                                    1000)
+                                                .toInt(),
+                                      );
+                                      videoController.seekTo(position);
+                                      seeking = false;
+                                    },
+                                  ),
+                                  // Detection markers overlay
+                                  if (clip.frames.isNotEmpty)
+                                    Container(
+                                      height: 20,
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: 24,
+                                      ),
+                                      child: Stack(
+                                        children: clip.frames
+                                            .where(
+                                              (frame) =>
+                                                  frame.detections.isNotEmpty,
+                                            )
+                                            .map((frame) {
+                                              double position =
+                                                  (frame.frameNumber /
+                                                      clip
+                                                          .videoInfo!
+                                                          .totalFrames) *
+                                                  (MediaQuery.of(
+                                                        context,
+                                                      ).size.width -
+                                                      48);
+                                              return Positioned(
+                                                left: position,
+                                                child: Container(
+                                                  width: 2,
+                                                  height: 20,
+                                                  color: Colors.red,
+                                                ),
+                                              );
+                                            })
+                                            .toList(),
+                                      ),
+                                    ),
+                                  Text(
+                                    'Frame: $curFrame / ${clip.videoInfo?.totalFrames ?? 0}',
+                                  ),
+                                ],
+                              )
+                            : Container()
+                      : Container(),
 
                   // Detection count display
                   if (clip.frames.isNotEmpty) ...[
@@ -580,7 +659,6 @@ class _ViewerPageState extends State<ViewerPage> {
                       'Total detections: ${clip.frames.fold(0, (sum, frame) => sum + frame.detections.length)}',
                     ),
                     const SizedBox(height: 8),
-                  
                   ],
                 ],
               ),
