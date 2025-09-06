@@ -115,7 +115,7 @@ class _ViewerPageState extends State<ViewerPage> {
                       child: Stack(children: [
                         VideoPlayer(videoController),
                         CustomPaint(
-                          painter: DetectionPainter(clip.frames.where((frame) => frame.frameNumber == curFrame).toList()),
+                          painter: DetectionPainter(clip.frames),
                         ),
                       ]),
                     ),
