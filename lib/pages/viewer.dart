@@ -27,8 +27,8 @@ class _ViewerPageState extends State<ViewerPage> {
   bool seeking = false;
 
   Stream<Map<String, dynamic>>? fetchData() {
-    // var endpoint = Uri.parse('http://127.0.0.1:8000/analyze');
-    var endpoint = Uri.parse('http://192.168.1.10:8000/analyze');
+    var endpoint = Uri.parse('http://192.168.1.10:8800/analyze');
+    //var endpoint = Uri.parse('http://10.0.0.134:8800/analyze');
     File videoFile = File(widget.videoPath!);
     var request = http.MultipartRequest('POST', endpoint);
     request.files.add(
@@ -112,7 +112,12 @@ class _ViewerPageState extends State<ViewerPage> {
                     flex: 3,
                     child: AspectRatio(
                       aspectRatio: videoController.value.aspectRatio,
-                      child: VideoPlayer(videoController),
+                      child: Stack(children: [
+                        CustomPaint(
+                          painter: DetectionPainter(clip.frames.where((frame) => frame.frameNumber == curFrame).toList()),
+                          child: Container(),
+                        ),
+                        VideoPlayer(videoController,)]),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -181,59 +186,79 @@ class _ViewerPageState extends State<ViewerPage> {
 
                   const SizedBox(height: 10),
 
-                  clip.videoInfo != null ?
-                  clip.videoInfo!.totalFrames > 0 ? 
-                  Column(
-                    children: [
-                      Slider(
-                        value: curFrame.toDouble(),
-                        min: 0,
-                        max: clip.videoInfo!.totalFrames.toDouble(),
-                        divisions: clip.videoInfo!.totalFrames,
-                        label: 'Frame $curFrame',
-                        onChangeStart: (value) {
-                          seeking = true;
-                        },
-                        onChanged: (value) {
-                          setState(() {
-                            curFrame = value.toInt();
-                          });
-                        },
-                        onChangeEnd: (value) {
-                          final position = Duration(
-                              milliseconds:
-                                  (value / (clip.videoInfo?.fps ?? 30) * 1000)
-                                      .toInt());
-                          videoController.seekTo(position);
-                          seeking = false;
-                        },
-                      ),
-                      // Detection markers overlay
-                      if (clip.frames.isNotEmpty)
-                        Container(
-                          height: 20,
-                          margin: const EdgeInsets.symmetric(horizontal: 24),
-                          child: Stack(
-                            children: clip.frames
-                                .where((frame) => frame.detections.isNotEmpty)
-                                .map((frame) {
-                              double position = (frame.frameNumber / clip.videoInfo!.totalFrames) * 
-                                  (MediaQuery.of(context).size.width - 48);
-                              return Positioned(
-                                left: position,
-                                child: Container(
-                                  width: 2,
-                                  height: 20,
-                                  color: Colors.red,
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                      Text(
-                          'Frame: $curFrame / ${clip.videoInfo?.totalFrames ?? 0}'),
-                    ],
-                  ) : Container() : Container(),
+                  clip.videoInfo != null
+                      ? clip.videoInfo!.totalFrames > 0
+                            ? Column(
+                                children: [
+                                  Slider(
+                                    value: curFrame.toDouble(),
+                                    min: 0,
+                                    max: clip.videoInfo!.totalFrames.toDouble(),
+                                    divisions: clip.videoInfo!.totalFrames,
+                                    label: 'Frame $curFrame',
+                                    onChangeStart: (value) {
+                                      seeking = true;
+                                    },
+                                    onChanged: (value) {
+                                      setState(() {
+                                        curFrame = value.toInt();
+                                      });
+                                    },
+                                    onChangeEnd: (value) {
+                                      final position = Duration(
+                                        milliseconds:
+                                            (value /
+                                                    (clip.videoInfo?.fps ??
+                                                        30) *
+                                                    1000)
+                                                .toInt(),
+                                      );
+                                      videoController.seekTo(position);
+                                      seeking = false;
+                                    },
+                                  ),
+                                  // Detection markers overlay
+                                  if (clip.frames.isNotEmpty)
+                                    Container(
+                                      height: 20,
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: 24,
+                                      ),
+                                      child: Stack(
+                                        children: clip.frames
+                                            .where(
+                                              (frame) =>
+                                                  frame.detections.isNotEmpty,
+                                            )
+                                            .map((frame) {
+                                              double position =
+                                                  (frame.frameNumber /
+                                                      clip
+                                                          .videoInfo!
+                                                          .totalFrames) *
+                                                  (MediaQuery.of(
+                                                        context,
+                                                      ).size.width -
+                                                      48);
+                                              return Positioned(
+                                                left: position,
+                                                child: Container(
+                                                  width: 2,
+                                                  height: 20,
+                                                  color: Colors.red,
+                                                ),
+                                              );
+                                            })
+                                            .toList(),
+                                      ),
+                                    ),
+                                  Text(
+                                    'Frame: $curFrame / ${clip.videoInfo?.totalFrames ?? 0}',
+                                  ),
+                                ],
+                              )
+                            : Container()
+                      : Container(),
 
                   // Detection count display
                   if (clip.frames.isNotEmpty)
@@ -303,5 +328,35 @@ class _ViewerPageState extends State<ViewerPage> {
         ),
       ),
     );
+  }
+}
+
+class DetectionPainter extends CustomPainter {
+  late final List<FrameData> frames;
+  DetectionPainter(this.frames);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = Colors.red;
+    paint.strokeCap = StrokeCap.round;
+    paint.strokeWidth = 3.0;
+
+    for (var frame in frames) {
+      for (var detection in frame.detections) {
+        Rect rect = Rect.fromLTRB(detection.bbox.centerX - detection.bbox.width / 2,
+            detection.bbox.centerY - detection.bbox.height / 2,
+            detection.bbox.centerX + detection.bbox.width / 2,
+            detection.bbox.centerY + detection.bbox.height / 2);
+              canvas.drawRect(rect, paint);
+      }
+
+      
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+    // TODO: implement shouldRepaint
+    return true;
   }
 }
