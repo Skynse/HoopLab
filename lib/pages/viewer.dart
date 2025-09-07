@@ -199,7 +199,7 @@ class _ViewerPageState extends State<ViewerPage> {
 
   void initializeYoloModel() async {
     try {
-      yoloModel = YOLO(modelPath: 'test_float16.tflite', task: YOLOTask.detect);
+      yoloModel = YOLO(modelPath: 'best_float16.tflite', task: YOLOTask.detect);
       await yoloModel!.loadModel();
       debugPrint('✅ YOLO model loaded successfully');
     } catch (e) {
