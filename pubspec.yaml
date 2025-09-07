@@ -71,7 +71,7 @@ flutter:
   #   - images/a_dot_ham.jpeg
   assets:
     - assets/video.mp4
-    - assets/best_float16.tflite
+    - assets/best_quant.tflite
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
 

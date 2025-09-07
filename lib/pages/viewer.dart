@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
@@ -22,32 +23,25 @@ class _ViewerPageState extends State<ViewerPage> {
   StreamSubscription? analysisSubscription;
   YOLO? yoloModel;
 
-  int curFrame = 0;
-  bool seeking = false;
+  // For frame preview
+  Uint8List? currentExtractedFrame;
+  int currentTimestamp = 5000; // 5 seconds default
 
   @override
   void initState() {
     super.initState();
     initializeVideoPlayer();
     initializeYoloModel();
+    initializeClip();
+  }
+
+  void initializeClip() {
     clip = Clip(
       id: "1",
       name: "Test Clip",
       video_path: widget.videoPath!,
       frames: [],
     );
-
-    videoController.addListener(() {
-      if (!seeking && videoController.value.isInitialized) {
-        setState(() {
-          curFrame =
-              (videoController.value.position.inMilliseconds /
-                      1000.0 *
-                      (clip.videoInfo?.fps ?? 30))
-                  .toInt();
-        });
-      }
-    });
   }
 
   void initializeVideoPlayer() {
@@ -59,16 +53,11 @@ class _ViewerPageState extends State<ViewerPage> {
 
   void initializeYoloModel() async {
     try {
-      yoloModel = YOLO(
-        useGpu: true,
-        modelPath: 'best_float16.tflite', // Remove 'assets/' prefix
-        task: YOLOTask.detect,
-      );
-
+      yoloModel = YOLO(modelPath: 'best_float16.tflite', task: YOLOTask.detect);
       await yoloModel!.loadModel();
-      debugPrint('YOLO model loaded successfully');
+      debugPrint('✅ YOLO model loaded successfully');
     } catch (e) {
-      debugPrint('Error initializing YOLO model: $e');
+      debugPrint('❌ Error initializing YOLO model: $e');
     }
   }
 
@@ -79,94 +68,62 @@ class _ViewerPageState extends State<ViewerPage> {
     super.dispose();
   }
 
-  Stream<FrameData> analyzeVideoFrames() async* {
-    if (yoloModel == null) {
-      return;
-    }
+  Future<void> extractAndShowFrame() async {
+    try {
+      debugPrint('🖼️ Extracting frame at ${currentTimestamp}ms...');
 
-    // Get video info first
-    final videoDuration = videoController.value.duration.inMilliseconds;
-    final videoInfo = VideoInfo(
-      fps: 30, // Assuming 30 FPS; ideally, extract this from the video metadata
-      totalFrames: (videoDuration / 1000 * 30)
-          .toInt(), // Estimate based on 30 FPS
-      duration: videoDuration / 1000.0,
-      width: videoController.value.size.width.toInt(),
-      height: videoController.value.size.height.toInt(),
-    );
+      final extractStopwatch = Stopwatch()..start();
+      final uint8list = await VideoThumbnail.thumbnailData(
+        video: widget.videoPath!,
+        imageFormat: ImageFormat.JPEG,
+        timeMs: currentTimestamp,
+        quality: 75,
+        maxWidth: 640,
+        maxHeight: 640,
+      );
+      extractStopwatch.stop();
 
-    // Update clip video info
-    clip.videoInfo = videoInfo;
-
-    // Extract and analyze frames
-    final totalFrames = videoInfo.totalFrames;
-    final frameInterval = 1000 ~/ videoInfo.fps; // milliseconds per frame
-
-    for (int frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
-      try {
-        final timestamp = frameIndex * frameInterval;
-
-        // Extract frame using video_thumbnail
-        final uint8list = await VideoThumbnail.thumbnailData(
-          video: widget.videoPath!,
-          imageFormat: ImageFormat.JPEG, // JPEG is faster than PNG
-          timeMs: timestamp,
-          quality: 75, // Reduce from 100 to 75 (still good quality)
-          maxWidth: 640, // Limit max width for faster inference
-          maxHeight: 640, // Limit max height for faster inference
-        );
-
-        if (uint8list != null) {
-          // Run YOLO inference on the frame
-          final results = await yoloModel!.predict(uint8list);
-
-          // Convert YOLO results to our format
-          final frameDetections = <Detection>[];
-
-          // Handle the results - cast to dynamic first to avoid type inference issues
-          final dynamic dynamicResults = results;
-
-          try {
-            if (dynamicResults is List) {
-              for (final result in dynamicResults) {
-                try {
-                  // Convert each YOLO result to our Detection format
-                  final detection = Detection(
-                    trackId: 0, // YOLO doesn't provide tracking by default
-                    bbox: BoundingBox(
-                      x1: result.box?.x1?.toDouble() ?? 0.0,
-                      y1: result.box?.y1?.toDouble() ?? 0.0,
-                      x2: result.box?.x2?.toDouble() ?? 0.0,
-                      y2: result.box?.y2?.toDouble() ?? 0.0,
-                    ),
-                    confidence: result.box?.conf?.toDouble() ?? 0.0,
-                    timestamp: timestamp / 1000.0,
-                  );
-                  frameDetections.add(detection);
-                } catch (e) {
-                  debugPrint('Error processing YOLO result: $e');
-                }
-              }
-            } else {
-              debugPrint('YOLO results format: ${dynamicResults.runtimeType}');
-              debugPrint('YOLO results content: $dynamicResults');
-            }
-          } catch (e) {
-            debugPrint('Error processing YOLO results: $e');
-          }
-
-          final frameData = FrameData(
-            frameNumber: frameIndex,
-            timestamp: timestamp / 1000.0,
-            detections: frameDetections,
-          );
-
-          yield frameData;
-        }
-      } catch (e) {
-        debugPrint('Error processing frame $frameIndex: $e');
-        // Continue with next frame
+      if (uint8list == null) {
+        debugPrint('❌ Failed to extract frame');
+        return;
       }
+
+      debugPrint(
+        '✅ Frame extracted in ${extractStopwatch.elapsedMilliseconds}ms',
+      );
+      debugPrint('   Frame size: ${uint8list.length} bytes');
+
+      setState(() {
+        currentExtractedFrame = uint8list;
+      });
+
+      // Test YOLO prediction on this frame
+      if (yoloModel != null) {
+        debugPrint('🤖 Running YOLO on extracted frame...');
+        final inferenceStopwatch = Stopwatch()..start();
+        final results = await yoloModel!.predict(uint8list, iouThreshold: 0.1);
+        print(results);
+        inferenceStopwatch.stop();
+
+        debugPrint(
+          '🤖 Inference completed in ${inferenceStopwatch.elapsedMilliseconds}ms',
+        );
+        debugPrint('📊 Raw results: $results');
+
+        // Try to count detections
+        int detectionCount = 0;
+        if (results is Map) {
+          if (results.containsKey('boxes') && results['boxes'] is List) {
+            detectionCount = (results['boxes'] as List).length;
+          }
+        } else if (results is List) {
+          detectionCount = results.length;
+        }
+
+        debugPrint('🎯 Found $detectionCount detections');
+      }
+    } catch (e) {
+      debugPrint('❌ Error extracting frame: $e');
     }
   }
 
@@ -178,273 +135,145 @@ class _ViewerPageState extends State<ViewerPage> {
 
     return SafeArea(
       child: Scaffold(
-        appBar: AppBar(title: const Text("Viewer")),
-        body: Stack(
-          children: [
-            // Main content
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Flexible(
-                    flex: 3,
-                    child: AspectRatio(
-                      aspectRatio: videoController.value.aspectRatio,
-                      child: Stack(
-                        children: [
-                          VideoPlayer(videoController),
-                          CustomPaint(
-                            painter: DetectionPainter(clip.frames, curFrame),
-                            size: Size.infinite,
-                          ),
-                        ],
+        appBar: AppBar(
+          title: const Text("Frame Extraction Debug"),
+          backgroundColor: Colors.blue,
+        ),
+        body: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              // Original video
+              Expanded(
+                flex: 1,
+                child: Column(
+                  children: [
+                    const Text(
+                      'Original Video',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  ElevatedButton(
-                    onPressed: () {
-                      if (isAnalyzing) {
-                        // Stop analysis
-                        analysisSubscription?.cancel();
-                        setState(() {
-                          isAnalyzing = false;
-                        });
-                      } else {
-                        // Start analysis
-                        setState(() {
-                          isAnalyzing = true;
-                          clip.frames.clear();
-                        });
-
-                        analysisSubscription = analyzeVideoFrames().listen(
-                          (frameData) {
-                            setState(() {
-                              clip.frames.add(frameData);
-                            });
-                          },
-                          onError: (error) {
-                            debugPrint('Analysis error: $error');
-                            setState(() {
-                              isAnalyzing = false;
-                            });
-                          },
-                          onDone: () {
-                            debugPrint('Analysis complete');
-                            setState(() {
-                              isAnalyzing = false;
-                            });
-                          },
-                        );
-                      }
-                    },
-                    child: Text(
-                      isAnalyzing ? "Stop Analysis" : "Start Analysis",
-                    ),
-                  ),
-
-                  const SizedBox(height: 10),
-
-                  clip.videoInfo != null
-                      ? clip.videoInfo!.totalFrames > 0
-                            ? Column(
-                                children: [
-                                  Slider(
-                                    value: curFrame.toDouble(),
-                                    min: 0,
-                                    max: clip.videoInfo!.totalFrames.toDouble(),
-                                    divisions: clip.videoInfo!.totalFrames,
-                                    label: 'Frame $curFrame',
-                                    onChangeStart: (value) {
-                                      seeking = true;
-                                    },
-                                    onChanged: (value) {
-                                      setState(() {
-                                        curFrame = value.toInt();
-                                      });
-                                    },
-                                    onChangeEnd: (value) {
-                                      final position = Duration(
-                                        milliseconds:
-                                            (value /
-                                                    (clip.videoInfo?.fps ??
-                                                        30) *
-                                                    1000)
-                                                .toInt(),
-                                      );
-                                      videoController.seekTo(position);
-                                      seeking = false;
-                                    },
-                                  ),
-                                  // Detection markers overlay
-                                  if (clip.frames.isNotEmpty)
-                                    Container(
-                                      height: 20,
-                                      margin: const EdgeInsets.symmetric(
-                                        horizontal: 24,
-                                      ),
-                                      child: Stack(
-                                        children: clip.frames
-                                            .where(
-                                              (frame) =>
-                                                  frame.detections.isNotEmpty,
-                                            )
-                                            .map((frame) {
-                                              double position =
-                                                  (frame.frameNumber /
-                                                      clip
-                                                          .videoInfo!
-                                                          .totalFrames) *
-                                                  (MediaQuery.of(
-                                                        context,
-                                                      ).size.width -
-                                                      48);
-                                              return Positioned(
-                                                left: position,
-                                                child: Container(
-                                                  width: 2,
-                                                  height: 20,
-                                                  color: Colors.red,
-                                                ),
-                                              );
-                                            })
-                                            .toList(),
-                                      ),
-                                    ),
-                                  Text(
-                                    'Frame: $curFrame / ${clip.videoInfo?.totalFrames ?? 0}',
-                                  ),
-                                ],
-                              )
-                            : Container()
-                      : Container(),
-
-                  // Detection count display
-                  if (clip.frames.isNotEmpty)
-                    Text(
-                      'Total detections: ${clip.frames.fold(0, (sum, frame) => sum + frame.detections.length)}',
-                    ),
-                ],
-              ),
-            ),
-
-            // Analysis overlay
-            if (isAnalyzing)
-              Container(
-                color: Colors.black.withValues(alpha: 0.7),
-                child: Center(
-                  child: Card(
-                    margin: const EdgeInsets.all(32.0),
-                    child: Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const CircularProgressIndicator(),
-                          const SizedBox(height: 16),
-                          const Text(
-                            'Analyzing Video...',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          if (clip.videoInfo != null) ...[
-                            Text(
-                              'Processing: ${clip.frames.length}/${clip.videoInfo!.totalFrames} frames',
-                            ),
-                            const SizedBox(height: 8),
-                            LinearProgressIndicator(
-                              value:
-                                  clip.frames.length /
-                                  clip.videoInfo!.totalFrames,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              '${((clip.frames.length / clip.videoInfo!.totalFrames) * 100).toStringAsFixed(1)}% Complete',
-                            ),
-                          ] else ...[
-                            const Text('Initializing...'),
-                          ],
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: () {
-                              analysisSubscription?.cancel();
-                              setState(() {
-                                isAnalyzing = false;
-                              });
-                            },
-                            child: const Text('Cancel'),
-                          ),
-                        ],
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: AspectRatio(
+                        aspectRatio: videoController.value.aspectRatio,
+                        child: VideoPlayer(videoController),
                       ),
                     ),
-                  ),
+                  ],
                 ),
               ),
-          ],
+
+              const SizedBox(height: 20),
+
+              // Timestamp selector
+              Row(
+                children: [
+                  const Text('Timestamp: '),
+                  Expanded(
+                    child: Slider(
+                      value: currentTimestamp.toDouble(),
+                      min: 0,
+                      max: videoController.value.duration.inMilliseconds
+                          .toDouble(),
+                      divisions: 20,
+                      label: '${(currentTimestamp / 1000).toStringAsFixed(1)}s',
+                      onChanged: (value) {
+                        setState(() {
+                          currentTimestamp = value.toInt();
+                        });
+                      },
+                    ),
+                  ),
+                  Text('${(currentTimestamp / 1000).toStringAsFixed(1)}s'),
+                ],
+              ),
+
+              const SizedBox(height: 10),
+
+              // Extract frame button
+              ElevatedButton(
+                onPressed: extractAndShowFrame,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  minimumSize: const Size(double.infinity, 50),
+                ),
+                child: const Text(
+                  'Extract & Analyze Frame',
+                  style: TextStyle(color: Colors.white, fontSize: 16),
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              // Extracted frame preview
+              Expanded(
+                flex: 1,
+                child: Column(
+                  children: [
+                    const Text(
+                      'Extracted Frame (What YOLO Sees)',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: Container(
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: currentExtractedFrame != null
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.memory(
+                                  currentExtractedFrame!,
+                                  fit: BoxFit.contain,
+                                ),
+                              )
+                            : const Center(
+                                child: Text(
+                                  'Click "Extract & Analyze Frame" to see what YOLO receives',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              // Seek video to same timestamp button
+              ElevatedButton(
+                onPressed: () {
+                  videoController.seekTo(
+                    Duration(milliseconds: currentTimestamp),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  minimumSize: const Size(double.infinity, 40),
+                ),
+                child: const Text(
+                  'Seek Video to Same Time',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
-  }
-}
-
-class DetectionPainter extends CustomPainter {
-  final List<FrameData> frames;
-  final int currentFrame;
-
-  DetectionPainter(this.frames, this.currentFrame);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.red
-      ..strokeCap = StrokeCap.round
-      ..strokeWidth = 3.0
-      ..style = PaintingStyle.stroke;
-
-    // Find the frame data for the current frame
-    final frameData = frames.firstWhere(
-      (frame) => frame.frameNumber == currentFrame,
-      orElse: () => FrameData(frameNumber: -1, timestamp: 0, detections: []),
-    );
-
-    if (frameData.frameNumber != -1) {
-      for (var detection in frameData.detections) {
-        final rect = Rect.fromLTRB(
-          detection.bbox.x1,
-          detection.bbox.y1,
-          detection.bbox.x2,
-          detection.bbox.y2,
-        );
-        canvas.drawRect(rect, paint);
-
-        // Draw confidence score
-        final textPainter = TextPainter(
-          text: TextSpan(
-            text: '${(detection.confidence * 100).toInt()}%',
-            style: const TextStyle(
-              color: Colors.red,
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        );
-        textPainter.layout();
-        textPainter.paint(
-          canvas,
-          Offset(detection.bbox.x1, detection.bbox.y1 - 15),
-        );
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return true;
   }
 }
