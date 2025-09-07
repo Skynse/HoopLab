@@ -45,6 +45,7 @@ class _ViewerPageState extends State<ViewerPage> {
     initializeClip();
 
     videoController.addListener(() {
+      setState(() {});
       if (videoController.value.isInitialized && clip.frames.isNotEmpty) {
         final currentTimeSeconds =
             videoController.value.position.inMilliseconds / 1000.0;
@@ -66,7 +67,7 @@ class _ViewerPageState extends State<ViewerPage> {
 
   Future<Map<String, dynamic>?> getVideoFrames() async {
     try {
-      var endpoint = "http://192.168.1.10:8080/extract_frames/";
+      var endpoint = "http://192.168.1.10:8080/extract_frames_fast/";
       var videoFile = File(widget.videoPath!);
 
       // Upload video file
@@ -163,8 +164,6 @@ class _ViewerPageState extends State<ViewerPage> {
       debugPrint('?? Video not initialized, cannot seek');
       return;
     }
-
-    final videoDuration = videoController.value.duration;
 
     try {
       await videoController.seekTo(position);
@@ -526,127 +525,77 @@ class _ViewerPageState extends State<ViewerPage> {
                           ),
                           const SizedBox(height: 8),
                           Expanded(
-                            child: GestureDetector(
-                              onTapDown: (details) {
-                                // Calculate seek position from tap location
-                                final tapX = details.localPosition.dx;
-                                final containerWidth =
-                                    MediaQuery.of(context).size.width - 32 - 16;
-                                final progress = (tapX / containerWidth).clamp(
-                                  0.0,
-                                  1.0,
-                                );
-                                final seekPosition = Duration(
-                                  milliseconds:
-                                      (progress *
-                                              videoController
-                                                  .value
-                                                  .duration
-                                                  .inMilliseconds)
-                                          .toInt(),
-                                );
-                                safeSeekTo(seekPosition);
-                              },
-                              child: Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  border: Border.all(color: Colors.grey),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Stack(
-                                  children: [
-                                    // Timeline background
-                                    Container(
-                                      height: double.infinity,
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey[200],
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
+                            child: Container(
+                              width: double.infinity,
+                              decoration: BoxDecoration(
+                                border: Border.all(color: Colors.grey),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Stack(
+                                children: [
+                                  // Timeline background
+                                  Container(
+                                    height: double.infinity,
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey[200],
+                                      borderRadius: BorderRadius.circular(4),
                                     ),
+                                  ),
 
-                                    // Detection markers
-                                    ...clip.frames
-                                        .where(
-                                          (frame) =>
-                                              frame.detections.isNotEmpty,
-                                        )
-                                        .map((frame) {
-                                          final videoDuration = videoController
-                                              .value
-                                              .duration
-                                              .inSeconds;
-                                          final position = videoDuration > 0
-                                              ? (frame.timestamp /
-                                                        videoDuration) *
-                                                    (MediaQuery.of(
-                                                          context,
-                                                        ).size.width -
-                                                        32 -
-                                                        16)
-                                              : 0.0;
+                                  // Detection markers
+                                  ...clip.frames
+                                      .where(
+                                        (frame) => frame.detections.isNotEmpty,
+                                      )
+                                      .map((frame) {
+                                        final videoDuration = videoController
+                                            .value
+                                            .duration
+                                            .inSeconds;
+                                        final position = videoDuration > 0
+                                            ? (frame.timestamp /
+                                                      videoDuration) *
+                                                  (MediaQuery.of(
+                                                        context,
+                                                      ).size.width -
+                                                      32 -
+                                                      16)
+                                            : 0.0;
 
-                                          return Positioned(
-                                            left: position,
-                                            top: 0,
-                                            bottom: 0,
-                                            child: Container(
-                                              width: 3,
-                                              color: Colors.red,
-                                              child: Tooltip(
-                                                message:
-                                                    '${frame.detections.length} detections at ${frame.timestamp.toStringAsFixed(1)}s',
-                                                child: Container(),
-                                              ),
+                                        return Positioned(
+                                          left: position,
+                                          top: 0,
+                                          bottom: 0,
+                                          child: Container(
+                                            width: 3,
+                                            color: Colors.red,
+                                            child: Tooltip(
+                                              message:
+                                                  '${frame.detections.length} detections at ${frame.timestamp.toStringAsFixed(1)}s',
+                                              child: Container(),
                                             ),
-                                          );
-                                        })
-                                        .toList(),
-                                    Slider(
-                                      value: videoController
-                                          .value
-                                          .position
-                                          .inSeconds
-                                          .toDouble(),
-                                      max: videoController
-                                          .value
-                                          .duration
-                                          .inSeconds
-                                          .toDouble(),
-                                      onChanged: (value) {
-                                        videoController.seekTo(
-                                          Duration(seconds: value.toInt()),
+                                          ),
                                         );
-                                      },
-                                    ),
-                                    // Current position indicator
-                                    if (videoController.value.isInitialized &&
-                                        videoController
-                                                .value
-                                                .duration
-                                                .inSeconds >
-                                            0)
-                                      Positioned(
-                                        left:
-                                            (videoController
-                                                    .value
-                                                    .position
-                                                    .inSeconds /
-                                                videoController
-                                                    .value
-                                                    .duration
-                                                    .inSeconds) *
-                                            (MediaQuery.of(context).size.width -
-                                                32 -
-                                                16),
-                                        top: 0,
-                                        bottom: 0,
-                                        child: Container(
-                                          width: 2,
-                                          color: Colors.blue,
-                                        ),
-                                      ),
-                                  ],
-                                ),
+                                      }),
+
+                                  Slider(
+                                    value: videoController
+                                        .value
+                                        .position
+                                        .inSeconds
+                                        .toDouble(),
+                                    max: videoController
+                                        .value
+                                        .duration
+                                        .inSeconds
+                                        .toDouble(),
+                                    onChanged: (value) {
+                                      videoController.seekTo(
+                                        Duration(seconds: value.toInt()),
+                                      );
+                                    },
+                                  ),
+                                ],
                               ),
                             ),
                           ),
