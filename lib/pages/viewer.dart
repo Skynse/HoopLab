@@ -1,13 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
 import 'package:video_player/video_player.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
-import 'package:flutter_video_info/flutter_video_info.dart';
+import 'package:chewie/chewie.dart';
+import 'package:http/http.dart' as http;
+import 'package:archive/archive_io.dart';
+import 'package:path/path.dart' as p;
 
 class ViewerPage extends StatefulWidget {
   final String? videoPath;
@@ -23,7 +25,7 @@ class _ViewerPageState extends State<ViewerPage> {
   late VideoPlayerController videoController;
   StreamSubscription? analysisSubscription;
   YOLO? yoloModel;
-
+  late ChewieController chewieController;
   int totalFramesToProcess = 0;
   int framesProcessed = 0;
   int totalDetections = 0;
@@ -34,122 +36,141 @@ class _ViewerPageState extends State<ViewerPage> {
   int? videoDurationMs;
   int? videoWidth;
   int? videoHeight;
-
+  DateTime? _lastFrameUpdate;
   @override
   void initState() {
     super.initState();
     initializeVideoPlayer();
     initializeYoloModel();
     initializeClip();
-    getVideoInfo(); // Get video metadata including framerate
 
-    // Listen to video position for detection overlay
     videoController.addListener(() {
       if (videoController.value.isInitialized && clip.frames.isNotEmpty) {
         final currentTimeSeconds =
             videoController.value.position.inMilliseconds / 1000.0;
-        int closestFrame = 0;
-        double minDifference = double.infinity;
+        final frameRate = videoFramerate ?? 30.0;
 
-        for (int i = 0; i < clip.frames.length; i++) {
-          final difference = (clip.frames[i].timestamp - currentTimeSeconds)
-              .abs();
-          if (difference < minDifference) {
-            minDifference = difference;
-            closestFrame = i;
-          }
-        }
+        // Direct frame index calculation (since you're analyzing every frame now)
+        final expectedFrameIndex = (currentTimeSeconds * frameRate).round();
+        final targetFrame = expectedFrameIndex.clamp(0, clip.frames.length - 1);
 
-        if (mounted) {
-          setState(() {
-            curFrame = closestFrame;
-          });
+        if (curFrame != targetFrame) {
+          curFrame = targetFrame;
+          if (mounted) setState(() {});
         }
+      } else {
+        if (mounted) setState(() {});
       }
     });
   }
 
-  List<Detection> getCurrentFrameDetections() {
-    final frameData = clip.frames.where(
-      (frame) =>
-          frame.timestamp ==
-          (videoController.value.position.inMilliseconds / 1000.0),
-    ).firstOrNull;
-    final detections =
-        frameData?.detections.whereType<Detection>().toList() ?? [];
-    print(
-      'Current frame at ${videoController.value.position.inMilliseconds}ms has ${detections.length} detections',
-    );
-    if (frameData != null) {
-      print(
-        'Frame ${frameData.frameNumber} has ${frameData.detections.length} raw detections',
+  Future<Map<String, dynamic>?> getVideoFrames() async {
+    try {
+      var endpoint = "http://192.168.1.10:8080/extract_frames/";
+      var videoFile = File(widget.videoPath!);
+
+      // Upload video file
+      var request = http.MultipartRequest('POST', Uri.parse(endpoint));
+      request.files.add(
+        await http.MultipartFile.fromPath('file', videoFile.path),
       );
+      var response = await request.send();
+
+      if (response.statusCode != 200) {
+        debugPrint('? Server error: ${response.statusCode}');
+        return null;
+      }
+
+      // Save zip to a temp file
+      var bytes = await response.stream.toBytes();
+      var tempDir = Directory.systemTemp.createTempSync();
+      var zipPath = p.join(tempDir.path, 'frames.zip');
+      File(zipPath).writeAsBytesSync(bytes);
+
+      // Extract zip to persistent directory
+      var persistentFramesDir = Directory.systemTemp.createTempSync(
+        'video_frames',
+      );
+      var archive = ZipDecoder().decodeBytes(File(zipPath).readAsBytesSync());
+
+      Map<String, dynamic> metadata = {};
+
+      for (var file in archive) {
+        if (file.isFile) {
+          var filename = file.name;
+          var content = file.content as List<int>;
+
+          if (filename == 'metadata.json') {
+            metadata = jsonDecode(utf8.decode(content));
+          } else if (filename.startsWith('frame_') &&
+              filename.endsWith('.jpg')) {
+            // Save frame to disk instead of memory
+            var framePath = p.join(persistentFramesDir.path, filename);
+            File(framePath).writeAsBytesSync(content);
+          }
+        }
+      }
+
+      // Add the frames directory path to metadata
+      metadata['frames_directory'] = persistentFramesDir.path;
+
+      // Clean up temp zip
+      File(zipPath).deleteSync();
+      tempDir.deleteSync();
+
+      return metadata;
+    } catch (e) {
+      debugPrint('? Error fetching video frames: $e');
+      return null;
     }
+  }
+
+  List<Detection> getCurrentFrameDetections() {
+    if (clip.frames.isEmpty) return [];
+
+    final currentTimeSeconds =
+        videoController.value.position.inMilliseconds / 1000.0;
+
+    // Find the closest frame instead of exact match
+    int closestFrame = 0;
+    double minDifference = double.infinity;
+
+    for (int i = 0; i < clip.frames.length; i++) {
+      final difference = (clip.frames[i].timestamp - currentTimeSeconds).abs();
+      if (difference < minDifference) {
+        minDifference = difference;
+        closestFrame = i;
+      }
+    }
+
+    final detections = clip.frames[closestFrame].detections
+        .whereType<Detection>()
+        .toList();
+
+    print(
+      'Current frame at ${(currentTimeSeconds * 1000).round()}ms has ${detections.length} detections',
+    );
+
     return detections;
   }
 
-  // Get video information including framerate
-  Future<void> getVideoInfo() async {
-    try {
-      final videoInfo = FlutterVideoInfo();
-      var info = await videoInfo.getVideoInfo(widget.videoPath!);
-
-      setState(() {
-        // Handle null framerate with fallback to 30 fps
-        videoFramerate = info?.framerate?.toDouble() ?? 30.0;
-        videoDurationMs = info?.duration?.toInt();
-        videoWidth = info?.width?.toInt();
-        videoHeight = info?.height?.toInt();
-      });
-
-      debugPrint('📹 Video Info:');
-      debugPrint(
-        '  Framerate: $videoFramerate fps ${info?.framerate == null ? "(fallback)" : "(detected)"}',
-      );
-      debugPrint('  Duration: $videoDurationMs ms');
-      debugPrint('  Resolution: ${videoWidth}x$videoHeight');
-    } catch (e) {
-      debugPrint('❌ Error getting video info: $e');
-      // Fallback values when the entire call fails
-      videoFramerate = 30.0; // Default assumption
-      videoDurationMs = videoController.value.duration.inMilliseconds;
-    }
-  }
-
+  Timer? _seekDebounceTimer;
   // Safe video seeking with bounds checking
   Future<void> safeSeekTo(Duration position) async {
+    _seekDebounceTimer?.cancel();
+
     if (!videoController.value.isInitialized) {
-      debugPrint('⚠️ Video not initialized, cannot seek');
+      debugPrint('?? Video not initialized, cannot seek');
       return;
     }
 
     final videoDuration = videoController.value.duration;
-    if (videoDuration == Duration.zero) {
-      debugPrint('⚠️ Video duration is zero, cannot seek');
-      return;
-    }
-
-    // Clamp position to valid range
-    Duration clampedPosition = position;
-    if (position >= videoDuration) {
-      clampedPosition = videoDuration - const Duration(milliseconds: 100);
-      debugPrint(
-        '⚠️ Seek position clamped to ${clampedPosition.inMilliseconds}ms (was ${position.inMilliseconds}ms)',
-      );
-    } else if (position < Duration.zero) {
-      clampedPosition = Duration.zero;
-      debugPrint(
-        '⚠️ Seek position clamped to 0ms (was ${position.inMilliseconds}ms)',
-      );
-    }
 
     try {
-      await videoController.seekTo(clampedPosition);
-      debugPrint(
-        '✅ Successfully sought to ${clampedPosition.inMilliseconds}ms',
-      );
+      await videoController.seekTo(position);
+      debugPrint('✅ Successfully sought to ${position.inMilliseconds}ms');
     } catch (e) {
-      debugPrint('❌ Error seeking to ${clampedPosition.inMilliseconds}ms: $e');
+      debugPrint('❌ Error seeking to ${position.inMilliseconds}ms: $e');
     }
   }
 
@@ -167,10 +188,14 @@ class _ViewerPageState extends State<ViewerPage> {
       ..initialize().then((_) {
         if (mounted) {
           setState(() {});
-          // Get video info after video controller is initialized
-          getVideoInfo();
         }
       });
+
+    chewieController = ChewieController(
+      videoPlayerController: videoController,
+      autoPlay: true,
+      looping: true,
+    );
   }
 
   void initializeYoloModel() async {
@@ -185,6 +210,7 @@ class _ViewerPageState extends State<ViewerPage> {
 
   @override
   void dispose() {
+    _seekDebounceTimer?.cancel();
     analysisSubscription?.cancel();
     videoController.dispose();
     super.dispose();
@@ -196,85 +222,70 @@ class _ViewerPageState extends State<ViewerPage> {
       return;
     }
 
-    // Wait for video info if not loaded yet
-    while (videoFramerate == null && mounted) {
-      await Future.delayed(const Duration(milliseconds: 100));
-    }
-
     final videoDuration =
         videoDurationMs ?? videoController.value.duration.inMilliseconds;
-    final framerate = videoFramerate ?? 30.0; // Fallback to 30 fps
+
+    final Map<String, dynamic>? frameResponse = await getVideoFrames();
+
+    /*
+         data['frame_data'].append({
+                'frame_index': frame_idx,
+                'extracted_index': extracted_count,
+                'timestamp': timestamp,
+                'frame_bytes': frame_bytes
+            })
+
+              data = {
+        "fps": fps,
+        "total_frames": total_frames,
+        "extracted_frames": 0,
+        "frame_interval": frame_interval,
+        "width": width,
+        "height": height,
+        'frame_data': []
+    }
+          */
+
+    videoWidth = frameResponse?['width'] as int?;
+    videoHeight = frameResponse?['height'] as int?;
+    double videoFramerate = (frameResponse?['fps'] as double);
+    videoDurationMs =
+        ((frameResponse?['total_frames'] as int?) ?? 0) *
+        (1000 / (videoFramerate)).round();
 
     // Calculate frame interval based on desired analysis frequency
-    // For example, analyze every 30th frame (1 second at 30fps) or every 15th frame (0.5 seconds)
-    final analyzeEveryNthFrame = (framerate * 0.1)
+    final analyzeEveryNthFrame = (videoFramerate * 0.1)
         .round(); // Analyze every 0.5 seconds
-    final frameIntervalMs = (1000 / framerate * analyzeEveryNthFrame).round();
-
-    totalFramesToProcess = (videoDuration / frameIntervalMs).ceil();
-    framesProcessed = 0;
-    totalDetections = 0;
-
-    debugPrint('🎬 Starting framerate-based video analysis:');
-    debugPrint('  Video framerate: ${framerate.toStringAsFixed(2)} fps');
-    debugPrint('  Analyzing every ${analyzeEveryNthFrame}th frame');
-    debugPrint('  Frame interval: ${frameIntervalMs}ms');
-    debugPrint('  Duration: ${videoDuration}ms');
-    debugPrint('  Total frames to process: $totalFramesToProcess');
-
-    for (
-      int timestampMs = 0;
-      timestampMs < videoDuration;
-      timestampMs += frameIntervalMs
-    ) {
+    final frameIntervalMs = (1000 / videoFramerate * analyzeEveryNthFrame)
+        .round();
+    for (int idx = 0; idx < frameResponse!['extracted_frames']; idx += 1) {
       try {
-        // Calculate the exact frame number for more precision
-        final frameNumber = (timestampMs * framerate / 1000).round();
-        final preciseTimestampMs = (frameNumber * 1000 / framerate).round();
+        final frameNumber = idx;
+        final preciseTimestampMs =
+            (frameResponse['frames'][idx]['timestamp'] as double) * 1000;
 
         debugPrint(
           '\n🎯 Processing frame #$frameNumber at ${preciseTimestampMs}ms...',
         );
 
-        final extractStopwatch = Stopwatch()..start();
-        final uint8list = await VideoThumbnail.thumbnailData(
-          video: widget.videoPath!,
-          imageFormat: ImageFormat.JPEG,
-          timeMs: preciseTimestampMs,
-          quality: 30,
-          maxWidth: videoWidth!,
-          maxHeight: videoHeight!,
-        );
-        extractStopwatch.stop();
+        // With this:
+        final framesDir = frameResponse['frames_directory'] as String;
+        final frameName = frameResponse['frames'][idx]['filename'] as String;
+        final framePath = p.join(framesDir, frameName);
+        final frameBytes = File(framePath).readAsBytesSync();
+        totalFramesToProcess = frameResponse['extracted_frames'];
 
-        if (uint8list == null) {
-          debugPrint('❌ Failed to extract frame at ${preciseTimestampMs}ms');
-          continue;
-        }
-
-        debugPrint(
-          '✅ Frame extracted in ${extractStopwatch.elapsedMilliseconds}ms',
-        );
-
-        final inferenceStopwatch = Stopwatch()..start();
         final results = await yoloModel!.predict(
-          uint8list,
+          frameBytes,
           confidenceThreshold: 0.6,
         );
-        inferenceStopwatch.stop();
 
-        debugPrint(
-          '🤖 Inference completed in ${inferenceStopwatch.elapsedMilliseconds}ms',
-        );
-
-        // Parse the new format detections
+        // Parse detections from YOLO results
         final frameDetections = <Detection>[];
         int detectionsInFrame = 0;
 
         try {
-          if (results is Map &&
-              results.containsKey('boxes') &&
-              results['boxes'] is List) {
+          if (results.containsKey('boxes') && results['boxes'] is List) {
             final boxes = results['boxes'] as List;
             debugPrint('📦 Found ${boxes.length} boxes in results');
 
@@ -295,8 +306,7 @@ class _ViewerPageState extends State<ViewerPage> {
                     trackId: detectionsInFrame,
                     bbox: BoundingBox(x1: x1, y1: y1, x2: x2, y2: y2),
                     confidence: confidence,
-                    timestamp:
-                        preciseTimestampMs / 1000.0, // Use precise timestamp
+                    timestamp: preciseTimestampMs / 1000.0,
                   );
                   frameDetections.add(detection);
                   detectionsInFrame++;
@@ -321,13 +331,13 @@ class _ViewerPageState extends State<ViewerPage> {
 
         final frameData = FrameData(
           frameNumber: frameNumber,
-          timestamp: preciseTimestampMs / 1000.0, // Use precise timestamp
+          timestamp: preciseTimestampMs / 1000.0,
           detections: frameDetections,
         );
 
         yield frameData;
       } catch (e) {
-        debugPrint('❌ Error processing frame at ${timestampMs}ms: $e');
+        debugPrint('❌ Error processing frame at ${e}ms: $e');
       }
     }
 
@@ -365,26 +375,31 @@ class _ViewerPageState extends State<ViewerPage> {
                       aspectRatio: videoController.value.aspectRatio,
                       child: Stack(
                         children: [
-                          VideoPlayer(videoController),
+                          Chewie(controller: chewieController),
                           // Detection overlay
                           Positioned.fill(
-                            child: CustomPaint(
-                              painter: DetectionPainter(
-                                detections: getCurrentFrameDetections(),
-                                videoSize: Size(
-                                  clip.videoInfo?.width.toDouble() ?? 1920,
-                                  clip.videoInfo?.height.toDouble() ?? 1080,
-                                ),
-                                widgetSize: Size(
-                                  MediaQuery.of(context).size.width - 32,
-                                  (MediaQuery.of(context).size.width - 32) /
-                                      videoController.value.aspectRatio,
-                                ),
-                                aspectRatio: videoController.value.aspectRatio,
-                                allFrames: clip.frames,
-                                currentFrame: curFrame,
-                         
-                              ),
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                return IgnorePointer(
+                                  child: CustomPaint(
+                                    painter: DetectionPainter(
+                                      detections: getCurrentFrameDetections(),
+                                      videoSize: Size(
+                                        videoWidth?.toDouble() ?? 1080,
+                                        videoHeight?.toDouble() ?? 1920,
+                                      ),
+                                      widgetSize: Size(
+                                        constraints.maxWidth,
+                                        constraints.maxHeight,
+                                      ),
+                                      aspectRatio:
+                                          videoController.value.aspectRatio,
+                                      allFrames: clip.frames,
+                                      currentFrame: curFrame,
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
                           ),
                         ],
@@ -399,19 +414,20 @@ class _ViewerPageState extends State<ViewerPage> {
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       ElevatedButton.icon(
-                        onPressed: () {
+                        onPressed: () async {
                           if (videoController.value.position >=
                               videoController.value.duration) {
-                            safeSeekTo(Duration.zero);
-                          }
-
-                          if (videoController.value.isPlaying) {
-                            videoController.pause();
+                            // Video has ended - seek to beginning AND play
+                            await safeSeekTo(Duration.zero);
+                            await videoController.play();
                           } else {
-                            videoController.play();
+                            // Normal play/pause toggle
+                            if (videoController.value.isPlaying) {
+                              videoController.pause();
+                            } else {
+                              videoController.play();
+                            }
                           }
-
-                          setState(() {});
                         },
                         icon: Icon(
                           videoController.value.isPlaying
@@ -426,56 +442,49 @@ class _ViewerPageState extends State<ViewerPage> {
                         ),
                       ),
                       ElevatedButton.icon(
-                        onPressed: videoFramerate == null
-                            ? null
-                            : () {
-                                if (isAnalyzing) {
-                                  analysisSubscription?.cancel();
+                        onPressed: () {
+                          if (isAnalyzing) {
+                            analysisSubscription?.cancel();
+                            setState(() {
+                              isAnalyzing = false;
+                            });
+                          } else {
+                            setState(() {
+                              isAnalyzing = true;
+                              clip.frames.clear();
+                              totalDetections = 0;
+                              framesProcessed = 0;
+                            });
+
+                            analysisSubscription = analyzeVideoFrames().listen(
+                              (frameData) {
+                                if (mounted) {
+                                  setState(() {
+                                    clip.frames.add(frameData);
+                                  });
+                                }
+                              },
+                              onError: (error) {
+                                debugPrint('Analysis error: $error');
+                                if (mounted) {
                                   setState(() {
                                     isAnalyzing = false;
                                   });
-                                } else {
-                                  setState(() {
-                                    isAnalyzing = true;
-                                    clip.frames.clear();
-                                    totalDetections = 0;
-                                    framesProcessed = 0;
-                                  });
-
-                                  analysisSubscription = analyzeVideoFrames()
-                                      .listen(
-                                        (frameData) {
-                                          if (mounted) {
-                                            setState(() {
-                                              clip.frames.add(frameData);
-                                            });
-                                          }
-                                        },
-                                        onError: (error) {
-                                          debugPrint('Analysis error: $error');
-                                          if (mounted) {
-                                            setState(() {
-                                              isAnalyzing = false;
-                                            });
-                                          }
-                                        },
-                                        onDone: () {
-                                          if (mounted) {
-                                            setState(() {
-                                              isAnalyzing = false;
-                                            });
-                                          }
-                                        },
-                                      );
                                 }
                               },
+                              onDone: () {
+                                if (mounted) {
+                                  setState(() {
+                                    isAnalyzing = false;
+                                  });
+                                }
+                              },
+                            );
+                          }
+                        },
                         icon: Icon(isAnalyzing ? Icons.stop : Icons.analytics),
                         label: Text(
-                          isAnalyzing
-                              ? "Stop Analysis"
-                              : videoFramerate == null
-                              ? "Loading..."
-                              : "Start Analysis",
+                          isAnalyzing ? "Stop Analysis" : "Start Analysis",
                         ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: isAnalyzing
@@ -554,23 +563,7 @@ class _ViewerPageState extends State<ViewerPage> {
                                         borderRadius: BorderRadius.circular(4),
                                       ),
                                     ),
-                                    Slider(
-                                      value: videoController
-                                          .value
-                                          .position
-                                          .inSeconds
-                                          .toDouble(),
-                                      max: videoController
-                                          .value
-                                          .duration
-                                          .inSeconds
-                                          .toDouble(),
-                                      onChanged: (value) {
-                                        videoController.seekTo(
-                                          Duration(seconds: value.toInt()),
-                                        );
-                                      },
-                                    ),
+
                                     // Detection markers
                                     ...clip.frames
                                         .where(
@@ -608,6 +601,23 @@ class _ViewerPageState extends State<ViewerPage> {
                                           );
                                         })
                                         .toList(),
+                                    Slider(
+                                      value: videoController
+                                          .value
+                                          .position
+                                          .inSeconds
+                                          .toDouble(),
+                                      max: videoController
+                                          .value
+                                          .duration
+                                          .inSeconds
+                                          .toDouble(),
+                                      onChanged: (value) {
+                                        videoController.seekTo(
+                                          Duration(seconds: value.toInt()),
+                                        );
+                                      },
+                                    ),
                                     // Current position indicator
                                     if (videoController.value.isInitialized &&
                                         videoController
@@ -645,132 +655,6 @@ class _ViewerPageState extends State<ViewerPage> {
                     ),
                     const SizedBox(height: 20),
                   ],
-
-                  // Current frame detections list
-                  Expanded(
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Current Frame Detections',
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 8),
-                          Expanded(
-                            child:
-                                clip.frames.isNotEmpty &&
-                                    curFrame < clip.frames.length
-                                ? ListView.builder(
-                                    itemCount:
-                                        clip.frames[curFrame].detections.length,
-                                    itemBuilder: (context, index) {
-                                      final detection = clip
-                                          .frames[curFrame]
-                                          .detections[index];
-                                      final confidencePercent =
-                                          (detection.confidence * 100).toInt();
-
-                                      return Container(
-                                        margin: const EdgeInsets.only(
-                                          bottom: 8,
-                                        ),
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: Colors.green.withOpacity(0.1),
-                                          border: Border.all(
-                                            color: Colors.green.withOpacity(
-                                              0.3,
-                                            ),
-                                          ),
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            Icon(
-                                              Icons.sports_basketball,
-                                              color: Colors.green,
-                                              size: 24,
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    'Detection ${index + 1}',
-                                                    style: const TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      fontSize: 16,
-                                                    ),
-                                                  ),
-                                                  Text(
-                                                    'Confidence: $confidencePercent%',
-                                                    style: TextStyle(
-                                                      color: Colors.grey[600],
-                                                      fontSize: 14,
-                                                    ),
-                                                  ),
-                                                  Text(
-                                                    'Position: (${detection.bbox.x1.toInt()}, ${detection.bbox.y1.toInt()}) to (${detection.bbox.x2.toInt()}, ${detection.bbox.y2.toInt()})',
-                                                    style: TextStyle(
-                                                      color: Colors.grey[600],
-                                                      fontSize: 12,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                            Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 8,
-                                                    vertical: 4,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: _getConfidenceColor(
-                                                  detection.confidence,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(12),
-                                              ),
-                                              child: Text(
-                                                '$confidencePercent%',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    },
-                                  )
-                                : const Center(
-                                    child: Text(
-                                      'No detections in current frame.\nRun analysis to detect objects.',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(color: Colors.grey),
-                                    ),
-                                  ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -876,6 +760,7 @@ class DetectionPainter extends CustomPainter {
 
     // Calculate the actual video display area within the widget
     final widgetAspectRatio = size.width / size.height;
+
     final videoAspectRatio = aspectRatio;
 
     double videoDisplayWidth, videoDisplayHeight;
@@ -897,10 +782,9 @@ class DetectionPainter extends CustomPainter {
     final scaleX = videoDisplayWidth / videoSize.width;
     final scaleY = videoDisplayHeight / videoSize.height;
 
-    // Draw trajectories first (so they appear behind current detections)
-    if (showTrajectories) {
-      _drawTrajectories(canvas, scaleX, scaleY, offsetX, offsetY);
-    }
+    // if (showTrajectories) {
+    //   _drawTrajectories(canvas, scaleX, scaleY, offsetX, offsetY);
+    // }
 
     // Draw current frame detections
     _drawCurrentDetections(canvas, size, scaleX, scaleY, offsetX, offsetY);
@@ -983,13 +867,30 @@ class DetectionPainter extends CustomPainter {
       final color = _getTrackColor(detection.trackId);
       paint.color = color;
 
-      // Scale and offset bounding box coordinates
+      double x1_norm = detection.bbox.x1 / videoSize.width;
+      double y1_norm = detection.bbox.y1 / videoSize.height;
+      double x2_norm = detection.bbox.x2 / videoSize.width;
+      double y2_norm = detection.bbox.y2 / videoSize.height;
+
+      double real_x1 = x1_norm * widgetSize.width;
+      double real_y1 = y1_norm * widgetSize.height;
+      double real_x2 = x2_norm * widgetSize.width;
+      double real_y2 = y2_norm * widgetSize.height;
+
       final rect = Rect.fromLTRB(
-        (detection.bbox.x1 * scaleX) + offsetX,
-        (detection.bbox.y1 * scaleY) + offsetY,
-        (detection.bbox.x2 * scaleX) + offsetX,
-        (detection.bbox.y2 * scaleY) + offsetY,
+        real_x1 + offsetX,
+        real_y1 + offsetY,
+        real_x2 + offsetX,
+        real_y2 + offsetY,
       );
+
+      // // Scale and offset bounding box coordinates
+      // final rect = Rect.fromLTRB(
+      //   (detection.bbox.x1 * scaleX) + offsetX,
+      //   (detection.bbox.y1 * scaleY) + offsetY,
+      //   (detection.bbox.x2 * scaleX) + offsetX,
+      //   (detection.bbox.y2 * scaleY) + offsetY,
+      // );
 
       // Draw bounding box
       canvas.drawRect(rect, paint);
@@ -1048,13 +949,34 @@ class DetectionPainter extends CustomPainter {
   }
 
   @override
+  @override
   bool shouldRepaint(DetectionPainter oldDelegate) {
-    return detections != oldDelegate.detections ||
-        videoSize != oldDelegate.videoSize ||
+    // // Only repaint if current frame detections actually changed
+    if (currentFrame != oldDelegate.currentFrame) {
+      // Check if the detections for this specific frame are different
+      final currentDetections = currentFrame < allFrames.length
+          ? allFrames[currentFrame].detections
+          : <Detection>[];
+      final oldDetections =
+          oldDelegate.currentFrame < oldDelegate.allFrames.length
+          ? oldDelegate.allFrames[oldDelegate.currentFrame].detections
+          : <Detection>[];
+
+      if (currentDetections.length != oldDetections.length) return true;
+
+      // Only repaint if detection positions/confidence actually changed
+      for (int i = 0; i < currentDetections.length; i++) {
+        if (i >= oldDetections.length ||
+            currentDetections[i].bbox != oldDetections[i].bbox ||
+            currentDetections[i].confidence != oldDetections[i].confidence) {
+          return true;
+        }
+      }
+    }
+
+    // Always repaint for size changes
+    return videoSize != oldDelegate.videoSize ||
         widgetSize != oldDelegate.widgetSize ||
-        aspectRatio != oldDelegate.aspectRatio ||
-        allFrames != oldDelegate.allFrames ||
-        currentFrame != oldDelegate.currentFrame ||
-        showTrajectories != oldDelegate.showTrajectories;
+        aspectRatio != oldDelegate.aspectRatio;
   }
 }

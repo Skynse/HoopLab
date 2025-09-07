@@ -149,8 +149,7 @@ def generate_data(video_path: str):
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    resized_width = width // 2
-    resized_height = height // 2
+
     video_info = {
         "type": "video_info",
         "data": {
