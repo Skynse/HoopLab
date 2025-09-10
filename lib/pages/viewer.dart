@@ -67,7 +67,7 @@ class _ViewerPageState extends State<ViewerPage> {
 
   Future<Map<String, dynamic>?> getVideoFrames() async {
     try {
-      var endpoint = "http://192.168.1.10:8080/extract_frames_fast/";
+      var endpoint = "http://10.0.0.134:8080/extract_frames_fast/";
       var videoFile = File(widget.videoPath!);
 
       // Upload video file
@@ -199,6 +199,13 @@ class _ViewerPageState extends State<ViewerPage> {
 
   void initializeYoloModel() async {
     try {
+      final modelExists = await YOLO.checkModelExists('best_float16.tflite');
+      print('Model exists: ${modelExists['exists']}');
+      print('Location: ${modelExists['location']}');
+
+      // 2. List available assets
+      final storagePaths = await YOLO.getStoragePaths();
+      print('Storage paths: $storagePaths');
       yoloModel = YOLO(modelPath: 'best_float16.tflite', task: YOLOTask.detect);
       await yoloModel!.loadModel();
       debugPrint('✅ YOLO model loaded successfully');
