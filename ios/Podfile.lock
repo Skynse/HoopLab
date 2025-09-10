@@ -2,40 +2,88 @@ PODS:
   - camerawesome (0.0.1):
     - Flutter
   - Flutter (1.0.0)
+  - flutter_video_info (1.1.0):
+    - Flutter
   - image_picker_ios (0.0.1):
+    - Flutter
+  - libwebp (1.5.0):
+    - libwebp/demux (= 1.5.0)
+    - libwebp/mux (= 1.5.0)
+    - libwebp/sharpyuv (= 1.5.0)
+    - libwebp/webp (= 1.5.0)
+  - libwebp/demux (1.5.0):
+    - libwebp/webp
+  - libwebp/mux (1.5.0):
+    - libwebp/demux
+  - libwebp/sharpyuv (1.5.0)
+  - libwebp/webp (1.5.0):
+    - libwebp/sharpyuv
+  - package_info_plus (0.4.5):
     - Flutter
   - path_provider_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
+  - ultralytics_yolo (0.0.4):
+    - Flutter
   - video_player_avfoundation (0.0.1):
     - Flutter
     - FlutterMacOS
+  - video_thumbnail (0.0.1):
+    - Flutter
+    - libwebp
+  - wakelock_plus (0.0.1):
+    - Flutter
 
 DEPENDENCIES:
   - camerawesome (from `.symlinks/plugins/camerawesome/ios`)
   - Flutter (from `Flutter`)
+  - flutter_video_info (from `.symlinks/plugins/flutter_video_info/ios`)
   - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
+  - package_info_plus (from `.symlinks/plugins/package_info_plus/ios`)
   - path_provider_foundation (from `.symlinks/plugins/path_provider_foundation/darwin`)
+  - ultralytics_yolo (from `.symlinks/plugins/ultralytics_yolo/ios`)
   - video_player_avfoundation (from `.symlinks/plugins/video_player_avfoundation/darwin`)
+  - video_thumbnail (from `.symlinks/plugins/video_thumbnail/ios`)
+  - wakelock_plus (from `.symlinks/plugins/wakelock_plus/ios`)
+
+SPEC REPOS:
+  trunk:
+    - libwebp
 
 EXTERNAL SOURCES:
   camerawesome:
     :path: ".symlinks/plugins/camerawesome/ios"
   Flutter:
     :path: Flutter
+  flutter_video_info:
+    :path: ".symlinks/plugins/flutter_video_info/ios"
   image_picker_ios:
     :path: ".symlinks/plugins/image_picker_ios/ios"
+  package_info_plus:
+    :path: ".symlinks/plugins/package_info_plus/ios"
   path_provider_foundation:
     :path: ".symlinks/plugins/path_provider_foundation/darwin"
+  ultralytics_yolo:
+    :path: ".symlinks/plugins/ultralytics_yolo/ios"
   video_player_avfoundation:
     :path: ".symlinks/plugins/video_player_avfoundation/darwin"
+  video_thumbnail:
+    :path: ".symlinks/plugins/video_thumbnail/ios"
+  wakelock_plus:
+    :path: ".symlinks/plugins/wakelock_plus/ios"
 
 SPEC CHECKSUMS:
   camerawesome: 7ad7493b41b648d2fab64b1fd5ae08299b913120
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  flutter_video_info: a932e1b0da369bba95c3a14b7f61d5f8b0d03280
   image_picker_ios: c560581cceedb403a6ff17f2f816d7fea1421fc1
+  libwebp: 02b23773aedb6ff1fd38cec7a77b81414c6842a8
+  package_info_plus: c0502532a26c7662a62a356cebe2692ec5fe4ec4
   path_provider_foundation: 2b6b4c569c0fb62ec74538f866245ac84301af46
+  ultralytics_yolo: c550236eb35c549df15ce6dfca979414d7b70248
   video_player_avfoundation: 7c6c11d8470e1675df7397027218274b6d2360b3
+  video_thumbnail: c4e2a3c539e247d4de13cd545344fd2d26ffafd1
+  wakelock_plus: 76957ab028e12bfa4e66813c99e46637f367fc7e
 
 PODFILE CHECKSUM: 3c63482e143d1b91d2d2560aee9fb04ecc74ac7e
 
