@@ -40,8 +40,8 @@ class _ViewerPageState extends State<ViewerPage> {
   @override
   void initState() {
     super.initState();
-    initializeVideoPlayer();
     initializeYoloModel();
+    initializeVideoPlayer();
     initializeClip();
 
     videoController.addListener(() {
@@ -199,14 +199,14 @@ class _ViewerPageState extends State<ViewerPage> {
 
   void initializeYoloModel() async {
     try {
-      final modelExists = await YOLO.checkModelExists('best_float16.tflite');
+      final modelExists = await YOLO.checkModelExists('best_float16');
       print('Model exists: ${modelExists['exists']}');
       print('Location: ${modelExists['location']}');
 
       // 2. List available assets
       final storagePaths = await YOLO.getStoragePaths();
       print('Storage paths: $storagePaths');
-      yoloModel = YOLO(modelPath: 'best_float16.tflite', task: YOLOTask.detect);
+      yoloModel = YOLO(modelPath: 'best_float16', task: YOLOTask.detect);
       await yoloModel!.loadModel();
       debugPrint('✅ YOLO model loaded successfully');
     } catch (e) {

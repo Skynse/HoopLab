@@ -51,5 +51,16 @@
 <string>You can select photos to attach to reports.</string>
 <key>NSMicrophoneUsageDescription</key>
 <string>The application does not use this feature</string>
+<!-- Enable Neural Engine -->
+<key>UIRequiredDeviceCapabilities</key>
+<array>
+    <string>neural-engine</string>
+</array>
+
+<!-- Metal for GPU acceleration -->
+<key>UIRequiredDeviceCapabilities</key>
+<array>
+    <string>metal</string>
+</array>
 </dict>
 </plist>
