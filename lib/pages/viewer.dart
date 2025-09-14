@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
 import 'package:video_player/video_player.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
-import 'package:chewie/chewie.dart';
+
 import 'package:http/http.dart' as http;
 import 'package:archive/archive_io.dart';
 import 'package:path/path.dart' as p;
@@ -25,7 +25,6 @@ class _ViewerPageState extends State<ViewerPage> {
   late VideoPlayerController videoController;
   StreamSubscription? analysisSubscription;
   YOLO? yoloModel;
-  late ChewieController chewieController;
   int totalFramesToProcess = 0;
   int framesProcessed = 0;
   int totalDetections = 0;
@@ -88,12 +87,16 @@ class _ViewerPageState extends State<ViewerPage> {
       var zipPath = p.join(tempDir.path, 'frames.zip');
       File(zipPath).writeAsBytesSync(bytes);
 
+      print(zipPath);
+
       // Extract zip to persistent directory
       var persistentFramesDir = Directory.systemTemp.createTempSync(
         'video_frames',
       );
-      var archive = ZipDecoder().decodeBytes(File(zipPath).readAsBytesSync());
 
+      print(persistentFramesDir.path);
+      var archive = ZipDecoder().decodeBytes(File(zipPath).readAsBytesSync());
+      print(archive.length.toString());
       Map<String, dynamic> metadata = {};
 
       for (var file in archive) {
@@ -118,7 +121,7 @@ class _ViewerPageState extends State<ViewerPage> {
       // Clean up temp zip
       File(zipPath).deleteSync();
       tempDir.deleteSync();
-
+      print(metadata.length);
       return metadata;
     } catch (e) {
       debugPrint('? Error fetching video frames: $e');
@@ -189,12 +192,6 @@ class _ViewerPageState extends State<ViewerPage> {
           setState(() {});
         }
       });
-
-    chewieController = ChewieController(
-      videoPlayerController: videoController,
-      autoPlay: true,
-      looping: true,
-    );
   }
 
   void initializeYoloModel() async {
@@ -232,6 +229,10 @@ class _ViewerPageState extends State<ViewerPage> {
         videoDurationMs ?? videoController.value.duration.inMilliseconds;
 
     final Map<String, dynamic>? frameResponse = await getVideoFrames();
+
+    if (frameResponse == null) {
+      print("FRAME RESPONSE EMPTY");
+    }
 
     /*
          data['frame_data'].append({
@@ -283,8 +284,10 @@ class _ViewerPageState extends State<ViewerPage> {
 
         final results = await yoloModel!.predict(
           frameBytes,
-          confidenceThreshold: 0.6,
+          confidenceThreshold: 0.5,
         );
+
+        print(results);
 
         // Parse detections from YOLO results
         final frameDetections = <Detection>[];
@@ -381,7 +384,7 @@ class _ViewerPageState extends State<ViewerPage> {
                       aspectRatio: videoController.value.aspectRatio,
                       child: Stack(
                         children: [
-                          Chewie(controller: chewieController),
+                          VideoPlayer(videoController),
                           // Detection overlay
                           Positioned.fill(
                             child: LayoutBuilder(
@@ -470,14 +473,7 @@ class _ViewerPageState extends State<ViewerPage> {
                                   });
                                 }
                               },
-                              onError: (error) {
-                                debugPrint('Analysis error: $error');
-                                if (mounted) {
-                                  setState(() {
-                                    isAnalyzing = false;
-                                  });
-                                }
-                              },
+
                               onDone: () {
                                 if (mounted) {
                                   setState(() {
