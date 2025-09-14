@@ -284,10 +284,9 @@ class _ViewerPageState extends State<ViewerPage> {
 
         final results = await yoloModel!.predict(
           frameBytes,
-          confidenceThreshold: 0.5,
+          confidenceThreshold: 0.7,
         );
 
-        print(results);
 
         // Parse detections from YOLO results
         final frameDetections = <Detection>[];
