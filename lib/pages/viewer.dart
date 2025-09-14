@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
+import 'package:hooplab/widgets/timeline.dart';
 import 'package:video_player/video_player.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
 
@@ -66,7 +67,8 @@ class _ViewerPageState extends State<ViewerPage> {
 
   Future<Map<String, dynamic>?> getVideoFrames() async {
     try {
-      var endpoint = "http://10.0.0.134:8080/extract_frames_fast/";
+      //var endpoint = "http://10.0.0.134:8080/extract_frames_fast/";
+      var endpoint = "http://192.168.1.10:8080/extract_frames_fast/";
       var videoFile = File(widget.videoPath!);
 
       // Upload video file
@@ -286,7 +288,6 @@ class _ViewerPageState extends State<ViewerPage> {
           frameBytes,
           confidenceThreshold: 0.7,
         );
-
 
         // Parse detections from YOLO results
         final frameDetections = <Detection>[];
@@ -517,93 +518,7 @@ class _ViewerPageState extends State<ViewerPage> {
 
                   // Video timeline with detection markers
                   if (clip.frames.isNotEmpty) ...[
-                    Container(
-                      height: 60,
-                      child: Column(
-                        children: [
-                          Text(
-                            'Timeline (${clip.frames.fold(0, (sum, frame) => sum + frame.detections.length)} total detections)',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 8),
-                          Expanded(
-                            child: Container(
-                              width: double.infinity,
-                              decoration: BoxDecoration(
-                                border: Border.all(color: Colors.grey),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Stack(
-                                children: [
-                                  // Timeline background
-                                  Container(
-                                    height: double.infinity,
-                                    decoration: BoxDecoration(
-                                      color: Colors.grey[200],
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                  ),
-
-                                  // Detection markers
-                                  ...clip.frames
-                                      .where(
-                                        (frame) => frame.detections.isNotEmpty,
-                                      )
-                                      .map((frame) {
-                                        final videoDuration = videoController
-                                            .value
-                                            .duration
-                                            .inSeconds;
-                                        final position = videoDuration > 0
-                                            ? (frame.timestamp /
-                                                      videoDuration) *
-                                                  (MediaQuery.of(
-                                                        context,
-                                                      ).size.width -
-                                                      32 -
-                                                      16)
-                                            : 0.0;
-
-                                        return Positioned(
-                                          left: position,
-                                          top: 0,
-                                          bottom: 0,
-                                          child: Container(
-                                            width: 3,
-                                            color: Colors.red,
-                                            child: Tooltip(
-                                              message:
-                                                  '${frame.detections.length} detections at ${frame.timestamp.toStringAsFixed(1)}s',
-                                              child: Container(),
-                                            ),
-                                          ),
-                                        );
-                                      }),
-
-                                  Slider(
-                                    value: videoController
-                                        .value
-                                        .position
-                                        .inSeconds
-                                        .toDouble(),
-                                    max: videoController
-                                        .value
-                                        .duration
-                                        .inSeconds
-                                        .toDouble(),
-                                    onChanged: (value) {
-                                      videoController.seekTo(
-                                        Duration(seconds: value.toInt()),
-                                      );
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    TimeLine(clip: clip, videoController: videoController),
                     const SizedBox(height: 20),
                   ],
                 ],
