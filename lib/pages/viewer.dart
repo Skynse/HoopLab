@@ -68,7 +68,7 @@ class _ViewerPageState extends State<ViewerPage> {
   Future<Map<String, dynamic>?> getVideoFrames() async {
     try {
       //var endpoint = "http://10.0.0.134:8080/extract_frames_fast/";
-      var endpoint = "http://192.168.1.10:8080/extract_frames_fast/";
+      var endpoint = "http://143.198.224.186:8080/extract_frames_fast/";
       var videoFile = File(widget.videoPath!);
 
       // Upload video file
