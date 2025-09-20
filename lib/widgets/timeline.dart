@@ -12,7 +12,7 @@ class TimeLine extends StatelessWidget {
     this.thumbnails,
   });
 
-  final Clip clip;
+  final Clip? clip;
   final VideoPlayerController videoController;
   List<File>? thumbnails;
 
@@ -23,7 +23,7 @@ class TimeLine extends StatelessWidget {
       child: Column(
         children: [
           Text(
-            'Timeline (${clip.frames.fold(0, (sum, frame) => sum + frame.detections.length)} total detections)',
+            'Timeline (${clip?.frames.fold(0, (sum, frame) => sum + frame.detections.length)} total detections)',
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
@@ -45,32 +45,33 @@ class TimeLine extends StatelessWidget {
                     ),
                   ),
 
-                  // Detection markers
-                  ...clip.frames.where((frame) => frame.detections.isNotEmpty).map((
-                    frame,
-                  ) {
-                    final videoDuration =
-                        videoController.value.duration.inSeconds;
-                    final position = videoDuration > 0
-                        ? (frame.timestamp / videoDuration) *
-                              (MediaQuery.of(context).size.width - 32 - 16)
-                        : 0.0;
+                  // // Detection markers
+                  
+                  // ...clip.frames.where((frame) => frame.detections.isNotEmpty).map((
+                  //   frame,
+                  // ) {
+                  //   final videoDuration =
+                  //       videoController.value.duration.inSeconds;
+                  //   final position = videoDuration > 0
+                  //       ? (frame.timestamp / videoDuration) *
+                  //             (MediaQuery.of(context).size.width - 32 - 16)
+                  //       : 0.0;
 
-                    return Positioned(
-                      left: position,
-                      top: 0,
-                      bottom: 0,
-                      child: Container(
-                        width: 3,
-                        color: Colors.red,
-                        child: Tooltip(
-                          message:
-                              '${frame.detections.length} detections at ${frame.timestamp.toStringAsFixed(1)}s',
-                          child: Container(),
-                        ),
-                      ),
-                    );
-                  }),
+                  //   return Positioned(
+                  //     left: position,
+                  //     top: 0,
+                  //     bottom: 0,
+                  //     child: Container(
+                  //       width: 3,
+                  //       color: Colors.red,
+                  //       child: Tooltip(
+                  //         message:
+                  //             '${frame.detections.length} detections at ${frame.timestamp.toStringAsFixed(1)}s',
+                  //         child: Container(),
+                  //       ),
+                  //     ),
+                  //   );
+                  // }),
 
                   Slider(
                     value: videoController.value.position.inSeconds.toDouble(),
