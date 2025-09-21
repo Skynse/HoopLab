@@ -20,12 +20,14 @@ class Clip {
       id: json['id'] ?? '',
       name: json['name'] ?? '',
       video_path: json['video_path'] ?? '',
-      videoInfo: json['videoInfo'] != null 
-          ? VideoInfo.fromJson(json['videoInfo']) 
+      videoInfo: json['videoInfo'] != null
+          ? VideoInfo.fromJson(json['videoInfo'])
           : null,
-      frames: (json['frames'] as List<dynamic>?)
-          ?.map((frame) => FrameData.fromJson(frame))
-          .toList() ?? [],
+      frames:
+          (json['frames'] as List<dynamic>?)
+              ?.map((frame) => FrameData.fromJson(frame))
+              .toList() ??
+          [],
     );
   }
 
@@ -91,9 +93,11 @@ class FrameData {
     return FrameData(
       frameNumber: json['frame_number'] ?? 0,
       timestamp: (json['timestamp'] ?? 0).toDouble(),
-      detections: (json['detections'] as List<dynamic>?)
-          ?.map((detection) => Detection.fromJson(detection))
-          .toList() ?? [],
+      detections:
+          (json['detections'] as List<dynamic>?)
+              ?.map((detection) => Detection.fromJson(detection))
+              .toList() ??
+          [],
     );
   }
 
@@ -111,12 +115,14 @@ class Detection {
   BoundingBox bbox;
   double confidence;
   double timestamp;
+  String label;
 
   Detection({
     required this.trackId,
     required this.bbox,
     required this.confidence,
     required this.timestamp,
+    required this.label,
   });
 
   factory Detection.fromJson(Map<String, dynamic> json) {
@@ -126,6 +132,7 @@ class Detection {
       bbox: BoundingBox.fromList(bboxList),
       confidence: (json['confidence'] ?? 0).toDouble(),
       timestamp: (json['timestamp'] ?? 0).toDouble(),
+      label: (json['label'] ?? '')
     );
   }
 
@@ -135,6 +142,7 @@ class Detection {
       'bbox': bbox.toList(),
       'confidence': confidence,
       'timestamp': timestamp,
+      'label': label,
     };
   }
 }
@@ -170,7 +178,7 @@ class BoundingBox {
   double get height => y2 - y1;
   double get centerX => (x1 + x2) / 2;
   double get centerY => (y1 + y2) / 2;
-  
+
   // Convert to Rect for UI purposes
   Rect toRect() {
     return Rect.fromLTRB(x1, y1, x2, y2);

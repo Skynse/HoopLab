@@ -293,6 +293,7 @@ class _ViewerPageState extends State<ViewerPage> {
         // Parse detections from YOLO results
         final frameDetections = <Detection>[];
         int detectionsInFrame = 0;
+        var names = ["ball", "made", "person", "rim", "shoot"];
 
         try {
           if (results.containsKey('boxes') && results['boxes'] is List) {
@@ -307,7 +308,7 @@ class _ViewerPageState extends State<ViewerPage> {
                 final y2 = (box['y2'] ?? 0).toDouble();
                 final confidence = (box['confidence'] ?? 0).toDouble();
                 final className =
-                    box['className']?.toString() ??
+                    box['class_id']?.toString() ??
                     box['class']?.toString() ??
                     'unknown';
 
@@ -317,6 +318,7 @@ class _ViewerPageState extends State<ViewerPage> {
                     bbox: BoundingBox(x1: x1, y1: y1, x2: x2, y2: y2),
                     confidence: confidence,
                     timestamp: preciseTimestampMs / 1000.0,
+                    label: className,
                   );
                   frameDetections.add(detection);
                   detectionsInFrame++;
@@ -516,9 +518,8 @@ class _ViewerPageState extends State<ViewerPage> {
                     Text('Detections found: $totalDetections'),
                     const SizedBox(height: 20),
                   ],
-                    TimeLine(clip: clip, videoController: videoController),
-                    const SizedBox(height: 20),
-                  
+                  TimeLine(clip: clip, videoController: videoController),
+                  const SizedBox(height: 20),
                 ],
               ),
             ),
@@ -598,4 +599,3 @@ class _ViewerPageState extends State<ViewerPage> {
     return "${twoDigits(duration.inHours)}:$twoDigitMinutes:$twoDigitSeconds";
   }
 }
-

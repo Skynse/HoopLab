@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -73,8 +74,37 @@ class DetectionPainter extends CustomPainter {
 
     // Collect all detection positions for each track
     for (final frame in allFrames) {
-      if (frame.frameNumber > currentFrame)
+      if (frame.frameNumber > currentFrame) {
         continue; // Only show past and current
+      }
+
+      if (currentFrame > 1) {
+        var lastFrameIndex = currentFrame - 1;
+
+        List<Detection> currentBalls = frame.detections
+            .where((d) => d.label == "ball")
+            .toList();
+
+        // Get previous frame balls
+        List<Detection> previousBalls = allFrames
+            .where((f) => f.frameNumber == lastFrameIndex)
+            .expand((f) => f.detections)
+            .where((d) => d.label == "ball")
+            .toList();
+
+        for (var c in currentBalls) {
+          
+          var previousBall = previousBalls.first;
+
+          double dt = c.timestamp - previousBall.timestamp;
+          double vx = (c.bbox.centerX - previousBall.bbox.centerX) / dt;
+          double vy = (c.bbox.centerY - previousBall.bbox.centerY) / dt;
+
+          double vel = sqrt(vx * vx + vy * vy);
+
+          print("Current velcoity: $vel");
+        }
+      }
 
       for (final detection in frame.detections) {
         final trackId = detection.trackId;
@@ -155,20 +185,12 @@ class DetectionPainter extends CustomPainter {
         real_y2 + offsetY,
       );
 
-      // // Scale and offset bounding box coordinates
-      // final rect = Rect.fromLTRB(
-      //   (detection.bbox.x1 * scaleX) + offsetX,
-      //   (detection.bbox.y1 * scaleY) + offsetY,
-      //   (detection.bbox.x2 * scaleX) + offsetX,
-      //   (detection.bbox.y2 * scaleY) + offsetY,
-      // );
-
       // Draw bounding box
       canvas.drawRect(rect, paint);
 
       // Draw confidence and track ID
       final text =
-          '🏀 ${detection.trackId} (${(detection.confidence * 100).toStringAsFixed(0)}%)';
+          '🏀 ${detection.label} (${(detection.confidence * 100).toStringAsFixed(0)}%)';
       textPainter.text = TextSpan(
         text: text,
         style: TextStyle(
@@ -219,7 +241,6 @@ class DetectionPainter extends CustomPainter {
     return colors[trackId % colors.length];
   }
 
-  @override
   @override
   bool shouldRepaint(DetectionPainter oldDelegate) {
     // // Only repaint if current frame detections actually changed
