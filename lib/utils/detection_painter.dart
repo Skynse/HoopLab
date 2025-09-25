@@ -326,12 +326,7 @@ class DetectionPainter extends CustomPainter {
       }
     }
 
-    // If no hoop detected, use estimated position based on court geometry
-    // This is a fallback - you might want to implement more sophisticated hoop detection
-    return Offset(
-      offsetX + (videoDisplayWidth(scaleX) * 0.85),
-      offsetY + (videoDisplayHeight(scaleY) * 0.3),
-    );
+    return null;
   }
 
   double videoDisplayWidth(double scaleX) => videoSize.width * scaleX;

@@ -37,7 +37,11 @@ class _ViewerPageState extends State<ViewerPage> {
   int? videoDurationMs;
   int? videoWidth;
   int? videoHeight;
-  DateTime? _lastFrameUpdate;
+
+  // Performance optimization
+  Timer? _frameUpdateTimer;
+  int _lastKnownFrame = -1;
+  bool _isVideoListenerActive = false;
   @override
   void initState() {
     super.initState();
@@ -45,25 +49,64 @@ class _ViewerPageState extends State<ViewerPage> {
     initializeVideoPlayer();
     initializeClip();
 
-    videoController.addListener(() {
-      setState(() {});
-      if (videoController.value.isInitialized && clip.frames.isNotEmpty) {
+    _setupVideoListener();
+  }
+
+  void _setupVideoListener() {
+    if (_isVideoListenerActive) return;
+    _isVideoListenerActive = true;
+
+    videoController.addListener(_onVideoPositionChanged);
+  }
+
+  void _onVideoPositionChanged() {
+    if (!mounted || !videoController.value.isInitialized) return;
+
+    // Throttle UI updates to reduce jitter
+    _frameUpdateTimer?.cancel();
+    _frameUpdateTimer = Timer(const Duration(milliseconds: 16), () {
+      if (!mounted) return;
+
+      if (clip.frames.isNotEmpty) {
         final currentTimeSeconds =
             videoController.value.position.inMilliseconds / 1000.0;
         final frameRate = videoFramerate ?? 30.0;
 
-        // Direct frame index calculation (since you're analyzing every frame now)
-        final expectedFrameIndex = (currentTimeSeconds * frameRate).round();
-        final targetFrame = expectedFrameIndex.clamp(0, clip.frames.length - 1);
+        // Find closest frame by timestamp instead of direct calculation
+        int targetFrame = _findClosestFrameIndex(currentTimeSeconds);
+        targetFrame = targetFrame.clamp(0, clip.frames.length - 1);
 
-        if (curFrame != targetFrame) {
+        // Only update if frame actually changed
+        if (curFrame != targetFrame && targetFrame != _lastKnownFrame) {
           curFrame = targetFrame;
-          if (mounted) setState(() {});
+          _lastKnownFrame = targetFrame;
+          setState(() {});
         }
       } else {
-        if (mounted) setState(() {});
+        // Only update UI if there's an actual change
+        if (_lastKnownFrame != -1) {
+          _lastKnownFrame = -1;
+          setState(() {});
+        }
       }
     });
+  }
+
+  int _findClosestFrameIndex(double currentTimeSeconds) {
+    if (clip.frames.isEmpty) return 0;
+
+    int closestIndex = 0;
+    double minDifference = double.infinity;
+
+    for (int i = 0; i < clip.frames.length; i++) {
+      final difference = (clip.frames[i].timestamp - currentTimeSeconds).abs();
+      if (difference < minDifference) {
+        minDifference = difference;
+        closestIndex = i;
+      }
+    }
+
+    return closestIndex;
   }
 
   Future<Map<String, dynamic>?> getVideoFrames() async {
@@ -133,50 +176,29 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   List<Detection> getCurrentFrameDetections() {
-    if (clip.frames.isEmpty) return [];
-
-    final currentTimeSeconds =
-        videoController.value.position.inMilliseconds / 1000.0;
-
-    // Find the closest frame instead of exact match
-    int closestFrame = 0;
-    double minDifference = double.infinity;
-
-    for (int i = 0; i < clip.frames.length; i++) {
-      final difference = (clip.frames[i].timestamp - currentTimeSeconds).abs();
-      if (difference < minDifference) {
-        minDifference = difference;
-        closestFrame = i;
-      }
+    if (clip.frames.isEmpty || curFrame < 0 || curFrame >= clip.frames.length) {
+      return [];
     }
 
-    final detections = clip.frames[closestFrame].detections
-        .whereType<Detection>()
-        .toList();
-
-    print(
-      'Current frame at ${(currentTimeSeconds * 1000).round()}ms has ${detections.length} detections',
-    );
-
-    return detections;
+    // Use the already calculated current frame instead of recalculating
+    return clip.frames[curFrame].detections;
   }
 
   Timer? _seekDebounceTimer;
   // Safe video seeking with bounds checking
   Future<void> safeSeekTo(Duration position) async {
     _seekDebounceTimer?.cancel();
+    _seekDebounceTimer = Timer(const Duration(milliseconds: 100), () async {
+      if (!mounted || !videoController.value.isInitialized) {
+        return;
+      }
 
-    if (!videoController.value.isInitialized) {
-      debugPrint('?? Video not initialized, cannot seek');
-      return;
-    }
-
-    try {
-      await videoController.seekTo(position);
-      debugPrint('✅ Successfully sought to ${position.inMilliseconds}ms');
-    } catch (e) {
-      debugPrint('❌ Error seeking to ${position.inMilliseconds}ms: $e');
-    }
+      try {
+        await videoController.seekTo(position);
+      } catch (e) {
+        debugPrint('❌ Error seeking to ${position.inMilliseconds}ms: $e');
+      }
+    });
   }
 
   void initializeClip() {
@@ -216,8 +238,16 @@ class _ViewerPageState extends State<ViewerPage> {
 
   @override
   void dispose() {
+    _frameUpdateTimer?.cancel();
     _seekDebounceTimer?.cancel();
     analysisSubscription?.cancel();
+
+    // Properly remove video listener
+    if (_isVideoListenerActive) {
+      videoController.removeListener(_onVideoPositionChanged);
+      _isVideoListenerActive = false;
+    }
+
     videoController.dispose();
     super.dispose();
   }
@@ -361,6 +391,44 @@ class _ViewerPageState extends State<ViewerPage> {
     );
   }
 
+  Widget _buildVideoPlayerWithOverlay() {
+    return AspectRatio(
+      aspectRatio: videoController.value.aspectRatio,
+      child: Stack(
+        children: [
+          VideoPlayer(videoController),
+          // Detection overlay
+          Positioned.fill(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return IgnorePointer(
+                  child: RepaintBoundary(
+                    child: CustomPaint(
+                      painter: DetectionPainter(
+                        detections: getCurrentFrameDetections(),
+                        videoSize: Size(
+                          videoWidth?.toDouble() ?? 1080,
+                          videoHeight?.toDouble() ?? 1920,
+                        ),
+                        widgetSize: Size(
+                          constraints.maxWidth,
+                          constraints.maxHeight,
+                        ),
+                        aspectRatio: videoController.value.aspectRatio,
+                        allFrames: clip.frames,
+                        currentFrame: curFrame,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!videoController.value.isInitialized) {
@@ -381,43 +449,7 @@ class _ViewerPageState extends State<ViewerPage> {
               child: Column(
                 children: [
                   // Video player with detection overlay
-                  Flexible(
-                    flex: 3,
-                    child: AspectRatio(
-                      aspectRatio: videoController.value.aspectRatio,
-                      child: Stack(
-                        children: [
-                          VideoPlayer(videoController),
-                          // Detection overlay
-                          Positioned.fill(
-                            child: LayoutBuilder(
-                              builder: (context, constraints) {
-                                return IgnorePointer(
-                                  child: CustomPaint(
-                                    painter: DetectionPainter(
-                                      detections: getCurrentFrameDetections(),
-                                      videoSize: Size(
-                                        videoWidth?.toDouble() ?? 1080,
-                                        videoHeight?.toDouble() ?? 1920,
-                                      ),
-                                      widgetSize: Size(
-                                        constraints.maxWidth,
-                                        constraints.maxHeight,
-                                      ),
-                                      aspectRatio:
-                                          videoController.value.aspectRatio,
-                                      allFrames: clip.frames,
-                                      currentFrame: curFrame,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                  Flexible(flex: 3, child: _buildVideoPlayerWithOverlay()),
 
                   const SizedBox(height: 20),
 
