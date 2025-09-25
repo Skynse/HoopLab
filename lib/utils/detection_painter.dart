@@ -99,78 +99,137 @@ class DetectionPainter extends CustomPainter {
     double offsetX,
     double offsetY,
   ) {
-    // Group detections by track ID
-    Map<int, List<Offset>> trajectories = {};
+    // Get ball trajectories with better filtering and grouping
+    final ballTrajectories = _getBallTrajectoriesForDrawing(
+      scaleX,
+      scaleY,
+      offsetX,
+      offsetY,
+    );
 
-    // Collect all detection positions for each track
-    for (final frame in allFrames) {
-      if (frame.frameNumber > currentFrame) {
-        continue; // Only show past and current
-      }
-
-      if (currentFrame > 1) {
-        var lastFrameIndex = currentFrame - 1;
-
-        List<Detection> currentBalls = frame.detections
-            .where((d) => d.label == "ball")
-            .toList();
-
-        // Get previous frame balls
-        List<Detection> previousBalls = allFrames
-            .where((f) => f.frameNumber == lastFrameIndex)
-            .expand((f) => f.detections)
-            .where((d) => d.label == "ball")
-            .toList();
-
-        for (var c in currentBalls) {
-          var previousBall = previousBalls.first;
-
-          double dt = c.timestamp - previousBall.timestamp;
-          double vx = (c.bbox.centerX - previousBall.bbox.centerX) / dt;
-          double vy = (c.bbox.centerY - previousBall.bbox.centerY) / dt;
-
-          double vel = sqrt(vx * vx + vy * vy);
-
-          print("Current velcoity: $vel");
-        }
-      }
-
-      for (final detection in frame.detections) {
-        final trackId = detection.trackId;
-        final centerX = (detection.bbox.centerX * scaleX) + offsetX;
-        final centerY = (detection.bbox.centerY * scaleY) + offsetY;
-
-        trajectories.putIfAbsent(trackId, () => []);
-        trajectories[trackId]!.add(Offset(centerX, centerY));
-      }
-    }
-
-    // Draw trajectory lines for each track
-    for (final entry in trajectories.entries) {
+    for (final entry in ballTrajectories.entries) {
       final trackId = entry.key;
       final points = entry.value;
 
-      if (points.length < 2) continue; // Need at least 2 points to draw a line
+      if (points.length < 2) continue;
 
       final color = _getTrackColor(trackId);
-      final trajectoryPaint = Paint()
-        ..color = color.withOpacity(0.6)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0;
 
-      // Draw lines between consecutive points
-      for (int i = 0; i < points.length - 1; i++) {
-        canvas.drawLine(points[i], points[i + 1], trajectoryPaint);
+      // Draw trajectory path with gradient effect
+      _drawTrajectoryPath(canvas, points, color);
+
+      // Draw trajectory points
+      _drawTrajectoryPoints(canvas, points, color);
+    }
+  }
+
+  Map<int, List<Offset>> _getBallTrajectoriesForDrawing(
+    double scaleX,
+    double scaleY,
+    double offsetX,
+    double offsetY,
+  ) {
+    Map<int, List<Offset>> trajectories = {};
+
+    // Show trajectory for a reasonable time window (last 3 seconds or 90 frames)
+    final int maxFramesToShow = 90;
+    final int startFrame = (currentFrame - maxFramesToShow).clamp(
+      0,
+      currentFrame,
+    );
+
+    // Collect ball positions in chronological order
+    for (int i = startFrame; i <= currentFrame && i < allFrames.length; i++) {
+      final frame = allFrames[i];
+
+      // Only process ball detections
+      final ballDetections = frame.detections
+          .where((d) => d.label.toLowerCase() == "ball")
+          .toList();
+
+      for (final detection in ballDetections) {
+        final centerX = (detection.bbox.centerX * scaleX) + offsetX;
+        final centerY = (detection.bbox.centerY * scaleY) + offsetY;
+        final position = Offset(centerX, centerY);
+
+        // Group by track ID, but also validate the trajectory makes sense
+        final trackId = detection.trackId;
+
+        trajectories.putIfAbsent(trackId, () => []);
+        final currentTrajectory = trajectories[trackId]!;
+
+        // Only add point if it's reasonable (not a huge jump)
+        if (currentTrajectory.isEmpty ||
+            _isReasonableMovement(currentTrajectory.last, position)) {
+          currentTrajectory.add(position);
+        } else {
+          // If there's a huge jump, start a new trajectory
+          trajectories[trackId] = [position];
+        }
       }
+    }
 
-      // Draw small circles at each trajectory point
-      final pointPaint = Paint()
-        ..color = color.withOpacity(0.4)
+    // Clean up short or invalid trajectories
+    trajectories.removeWhere((trackId, points) => points.length < 3);
+
+    return trajectories;
+  }
+
+  bool _isReasonableMovement(Offset lastPosition, Offset newPosition) {
+    final distance = (newPosition - lastPosition).distance;
+    // Maximum reasonable movement between frames (adjust based on your video resolution/framerate)
+    const double maxMovement = 200.0; // pixels
+    return distance < maxMovement;
+  }
+
+  void _drawTrajectoryPath(
+    Canvas canvas,
+    List<Offset> points,
+    Color baseColor,
+  ) {
+    if (points.length < 2) return;
+
+    // Draw the path with gradient opacity (older points fade out)
+    for (int i = 0; i < points.length - 1; i++) {
+      final progress = i / (points.length - 1);
+      final opacity = (0.3 + (progress * 0.5)).clamp(0.0, 0.8);
+
+      final paint = Paint()
+        ..color = baseColor.withOpacity(opacity)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth =
+            3.0 -
+            (progress * 1.0) // Thicker lines for recent trajectory
+        ..strokeCap = StrokeCap.round;
+
+      canvas.drawLine(points[i], points[i + 1], paint);
+    }
+  }
+
+  void _drawTrajectoryPoints(
+    Canvas canvas,
+    List<Offset> points,
+    Color baseColor,
+  ) {
+    for (int i = 0; i < points.length; i++) {
+      final progress = i / (points.length - 1);
+      final opacity = (0.4 + (progress * 0.4)).clamp(0.0, 0.8);
+      final radius =
+          2.0 + (progress * 2.0); // Larger points for recent positions
+
+      final paint = Paint()
+        ..color = baseColor.withOpacity(opacity)
         ..style = PaintingStyle.fill;
 
-      for (final point in points) {
-        canvas.drawCircle(point, 2, pointPaint);
-      }
+      canvas.drawCircle(points[i], radius, paint);
+
+      // Add white outline for better visibility
+      final outlinePaint = Paint()
+        ..color = Colors.white.withOpacity(opacity * 0.8)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0;
+
+      canvas.drawCircle(points[i], radius, outlinePaint);
     }
   }
 
@@ -270,8 +329,8 @@ class DetectionPainter extends CustomPainter {
     // Draw hoop
     _drawHoop(canvas, hoopPosition);
 
-    // Get ball trajectories for prediction
-    final ballTrajectories = _getBallTrajectories(
+    // Get current ball trajectories for prediction (only recent ones)
+    final ballTrajectories = _getBallTrajectoriesForDrawing(
       scaleX,
       scaleY,
       offsetX,
@@ -285,21 +344,58 @@ class DetectionPainter extends CustomPainter {
       if (trajectoryPoints.length < 3)
         continue; // Need at least 3 points for prediction
 
+      // Convert Offset points to TrajectoryPoint for prediction
+      final trajectoryData = _convertToTrajectoryPoints(
+        trackId,
+        trajectoryPoints,
+      );
+
+      if (trajectoryData.length < 3) continue;
+
       // Predict trajectory
-      final prediction = _predictBallTrajectory(trajectoryPoints, hoopPosition);
+      final prediction = _predictBallTrajectory(trajectoryData, hoopPosition);
 
       // Draw predicted path
       _drawPredictedPath(canvas, prediction, _getTrackColor(trackId));
 
-      // Draw optimal shot path
-      if (trajectoryPoints.isNotEmpty) {
+      // Draw optimal shot path from current ball position
+      if (trajectoryData.isNotEmpty) {
+        final currentPosition = trajectoryData.last.position;
         final optimalPath = _calculateOptimalShotPath(
-          trajectoryPoints.last.position,
+          currentPosition,
           hoopPosition,
         );
         _drawOptimalPath(canvas, optimalPath);
       }
     }
+  }
+
+  List<TrajectoryPoint> _convertToTrajectoryPoints(
+    int trackId,
+    List<Offset> positions,
+  ) {
+    if (positions.length < 2) return [];
+
+    List<TrajectoryPoint> trajectoryPoints = [];
+
+    // Create trajectory points with calculated velocities
+    for (int i = 0; i < positions.length; i++) {
+      final position = positions[i];
+      final timestamp =
+          i * (1.0 / 30.0); // Assume 30fps, adjust based on your video
+
+      Offset velocity = Offset.zero;
+      if (i > 0) {
+        final dt = 1.0 / 30.0; // Frame interval
+        final dx = position.dx - positions[i - 1].dx;
+        final dy = position.dy - positions[i - 1].dy;
+        velocity = Offset(dx / dt, dy / dt);
+      }
+
+      trajectoryPoints.add(TrajectoryPoint(position, timestamp, velocity));
+    }
+
+    return trajectoryPoints;
   }
 
   Offset? _detectHoopPosition(
@@ -594,38 +690,64 @@ class DetectionPainter extends CustomPainter {
   void _drawOptimalPath(Canvas canvas, List<Offset> optimalPath) {
     if (optimalPath.length < 2) return;
 
-    final optimalPaint = Paint()
-      ..color = Colors.yellow.withOpacity(0.6)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
-
-    // Draw dashed optimal trajectory
+    // Draw optimal trajectory with a more visible dashed pattern
     for (int i = 0; i < optimalPath.length - 1; i++) {
-      if (i % 2 == 0) {
-        // Draw every other segment for dashed effect
-        canvas.drawLine(optimalPath[i], optimalPath[i + 1], optimalPaint);
+      final progress = i / (optimalPath.length - 1);
+
+      // Create dashed effect with varying opacity
+      if (i % 3 != 2) {
+        // Draw 2 segments, skip 1 for dash effect
+        final paint = Paint()
+          ..color = Colors.yellow.withOpacity(0.7 + (progress * 0.2))
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3.5
+          ..strokeCap = StrokeCap.round;
+
+        canvas.drawLine(optimalPath[i], optimalPath[i + 1], paint);
       }
     }
 
-    // Add label
+    // Draw optimal path points
+    for (int i = 0; i < optimalPath.length; i += 4) {
+      // Show every 4th point
+      final paint = Paint()
+        ..color = Colors.orange.withOpacity(0.8)
+        ..style = PaintingStyle.fill;
+
+      canvas.drawCircle(optimalPath[i], 3.0, paint);
+
+      // White outline for visibility
+      final outlinePaint = Paint()
+        ..color = Colors.white.withOpacity(0.9)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0;
+
+      canvas.drawCircle(optimalPath[i], 3.0, outlinePaint);
+    }
+
+    // Add label at the start of the optimal path
     if (optimalPath.isNotEmpty) {
       final textPainter = TextPainter(textDirection: TextDirection.ltr);
       textPainter.text = TextSpan(
-        text: 'OPTIMAL SHOT',
+        text: '🎯 OPTIMAL SHOT',
         style: TextStyle(
           color: Colors.yellow,
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: FontWeight.bold,
-          backgroundColor: Colors.black54,
+          shadows: [
+            Shadow(
+              blurRadius: 2.0,
+              color: Colors.black.withOpacity(0.8),
+              offset: Offset(1.0, 1.0),
+            ),
+          ],
         ),
       );
       textPainter.layout();
 
-      final midPoint = optimalPath[optimalPath.length ~/ 2];
-      final textOffset = Offset(
-        midPoint.dx - textPainter.width / 2,
-        midPoint.dy - 20,
-      );
+      // Place label near the start of the optimal path
+      final startPoint = optimalPath.first;
+      final textOffset = Offset(startPoint.dx + 10, startPoint.dy - 25);
       textPainter.paint(canvas, textOffset);
     }
   }
