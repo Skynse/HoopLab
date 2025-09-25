@@ -189,20 +189,178 @@ class DetectionPainter extends CustomPainter {
   ) {
     if (points.length < 2) return;
 
-    // Draw the path with gradient opacity (older points fade out)
-    for (int i = 0; i < points.length - 1; i++) {
-      final progress = i / (points.length - 1);
-      final opacity = (0.3 + (progress * 0.5)).clamp(0.0, 0.8);
+    // Create smooth interpolated path
+    final interpolatedPoints = _createSmoothTrajectory(points);
 
-      final paint = Paint()
-        ..color = baseColor.withOpacity(opacity)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth =
-            3.0 -
-            (progress * 1.0) // Thicker lines for recent trajectory
-        ..strokeCap = StrokeCap.round;
+    if (interpolatedPoints.length < 2) return;
 
-      canvas.drawLine(points[i], points[i + 1], paint);
+    // Create smooth path using splines
+    final path = _createSplinePath(interpolatedPoints);
+
+    // Draw the path with gradient effect
+    _drawGradientPath(canvas, path, interpolatedPoints, baseColor);
+  }
+
+  List<Offset> _createSmoothTrajectory(List<Offset> originalPoints) {
+    if (originalPoints.length < 2) return originalPoints;
+
+    List<Offset> smoothPoints = [];
+
+    // Add the first point
+    smoothPoints.add(originalPoints.first);
+
+    // Interpolate between consecutive points
+    for (int i = 0; i < originalPoints.length - 1; i++) {
+      final current = originalPoints[i];
+      final next = originalPoints[i + 1];
+
+      // Calculate number of interpolation steps based on distance
+      final distance = (next - current).distance;
+      final steps = (distance / 12.0).ceil().clamp(
+        2,
+        10,
+      ); // 12 pixels per step, max 10 steps
+
+      // Add interpolated points between current and next
+      for (int step = 1; step <= steps; step++) {
+        final t = step / steps;
+
+        // Use smooth interpolation with physics-based easing
+        final smoothT = _smoothStep(t);
+
+        final interpolated = Offset(
+          current.dx + (next.dx - current.dx) * smoothT,
+          current.dy + (next.dy - current.dy) * smoothT,
+        );
+
+        // Only add if it's the last step or if it's reasonably different from the last point
+        if (step == steps ||
+            (interpolated - smoothPoints.last).distance > 3.0) {
+          smoothPoints.add(interpolated);
+        }
+      }
+    }
+
+    return smoothPoints;
+  }
+
+  double _smoothStep(double t) {
+    // Smooth step function for more natural ball movement
+    return t * t * (3.0 - 2.0 * t);
+  }
+
+  Path _createSplinePath(List<Offset> points) {
+    if (points.length < 2) return Path();
+
+    final path = Path();
+    path.moveTo(points.first.dx, points.first.dy);
+
+    if (points.length == 2) {
+      path.lineTo(points.last.dx, points.last.dy);
+      return path;
+    }
+
+    // Use catmull-rom spline for natural ball trajectory
+    for (int i = 1; i < points.length - 1; i++) {
+      final p0 = i > 0 ? points[i - 1] : points[i];
+      final p1 = points[i];
+      final p2 = points[i + 1];
+      final p3 = i < points.length - 2 ? points[i + 2] : points[i + 1];
+
+      // Create smooth curve segment
+      _addCatmullRomSegment(path, p0, p1, p2, p3);
+    }
+
+    return path;
+  }
+
+  void _addCatmullRomSegment(
+    Path path,
+    Offset p0,
+    Offset p1,
+    Offset p2,
+    Offset p3,
+  ) {
+    const int segments = 8; // Number of curve segments
+
+    for (int i = 1; i <= segments; i++) {
+      final t = i / segments;
+      final point = _catmullRomPoint(p0, p1, p2, p3, t);
+      path.lineTo(point.dx, point.dy);
+    }
+  }
+
+  Offset _catmullRomPoint(
+    Offset p0,
+    Offset p1,
+    Offset p2,
+    Offset p3,
+    double t,
+  ) {
+    final t2 = t * t;
+    final t3 = t2 * t;
+
+    final x =
+        0.5 *
+        ((2.0 * p1.dx) +
+            (-p0.dx + p2.dx) * t +
+            (2.0 * p0.dx - 5.0 * p1.dx + 4.0 * p2.dx - p3.dx) * t2 +
+            (-p0.dx + 3.0 * p1.dx - 3.0 * p2.dx + p3.dx) * t3);
+
+    final y =
+        0.5 *
+        ((2.0 * p1.dy) +
+            (-p0.dy + p2.dy) * t +
+            (2.0 * p0.dy - 5.0 * p1.dy + 4.0 * p2.dy - p3.dy) * t2 +
+            (-p0.dy + 3.0 * p1.dy - 3.0 * p2.dy + p3.dy) * t3);
+
+    return Offset(x, y);
+  }
+
+  void _drawGradientPath(
+    Canvas canvas,
+    Path path,
+    List<Offset> points,
+    Color baseColor,
+  ) {
+    // Draw multiple path strokes with varying opacity for gradient effect
+    final totalPoints = points.length;
+
+    // Create segments with different opacities for smooth gradient
+    for (int segment = 0; segment < 6; segment++) {
+      final startRatio = segment / 6.0;
+      final endRatio = (segment + 1) / 6.0;
+
+      final startIndex = (startRatio * totalPoints).floor();
+      final endIndex = (endRatio * totalPoints).ceil().clamp(
+        startIndex + 1,
+        totalPoints,
+      );
+
+      if (startIndex >= endIndex - 1) continue;
+
+      // Create segment path
+      final segmentPath = Path();
+      if (startIndex < points.length) {
+        segmentPath.moveTo(points[startIndex].dx, points[startIndex].dy);
+
+        for (int i = startIndex + 1; i < endIndex && i < points.length; i++) {
+          segmentPath.lineTo(points[i].dx, points[i].dy);
+        }
+
+        // Calculate opacity based on segment position (newer segments are more opaque)
+        final opacity = (0.15 + (segment / 6.0) * 0.65).clamp(0.0, 0.8);
+        final strokeWidth = 1.5 + (segment / 6.0) * 2.5; // Thicker toward end
+
+        final paint = Paint()
+          ..color = baseColor.withOpacity(opacity)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = strokeWidth
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round;
+
+        canvas.drawPath(segmentPath, paint);
+      }
     }
   }
 
@@ -211,25 +369,54 @@ class DetectionPainter extends CustomPainter {
     List<Offset> points,
     Color baseColor,
   ) {
-    for (int i = 0; i < points.length; i++) {
+    // Only draw key trajectory points (every 4th point) to avoid cluttering with interpolated points
+    for (int i = 0; i < points.length; i += 4) {
       final progress = i / (points.length - 1);
-      final opacity = (0.4 + (progress * 0.4)).clamp(0.0, 0.8);
+      final opacity = (0.3 + (progress * 0.5)).clamp(0.0, 0.7);
       final radius =
-          2.0 + (progress * 2.0); // Larger points for recent positions
+          1.5 + (progress * 2.5); // Larger points for recent positions
 
+      // Main point
       final paint = Paint()
         ..color = baseColor.withOpacity(opacity)
         ..style = PaintingStyle.fill;
 
       canvas.drawCircle(points[i], radius, paint);
 
-      // Add white outline for better visibility
+      // Add subtle white outline for better visibility
       final outlinePaint = Paint()
-        ..color = Colors.white.withOpacity(opacity * 0.8)
+        ..color = Colors.white.withOpacity(opacity * 0.6)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.0;
+        ..strokeWidth = 0.8;
 
       canvas.drawCircle(points[i], radius, outlinePaint);
+    }
+
+    // Always draw the most recent point more prominently
+    if (points.isNotEmpty) {
+      final lastPoint = points.last;
+
+      // Large current position indicator
+      final currentPaint = Paint()
+        ..color = baseColor.withOpacity(0.9)
+        ..style = PaintingStyle.fill;
+
+      canvas.drawCircle(lastPoint, 4.0, currentPaint);
+
+      // Bright outline
+      final currentOutlinePaint = Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+
+      canvas.drawCircle(lastPoint, 4.0, currentOutlinePaint);
+
+      // Small inner highlight
+      final highlightPaint = Paint()
+        ..color = Colors.white.withOpacity(0.8)
+        ..style = PaintingStyle.fill;
+
+      canvas.drawCircle(lastPoint, 1.5, highlightPaint);
     }
   }
 
