@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -9,9 +8,8 @@ import 'package:hooplab/widgets/timeline.dart';
 import 'package:video_player/video_player.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
 
-import 'package:http/http.dart' as http;
-import 'package:archive/archive_io.dart';
 import 'package:path/path.dart' as p;
+import 'package:easy_video_editor/easy_video_editor.dart';
 
 class ViewerPage extends StatefulWidget {
   final String? videoPath;
@@ -23,6 +21,8 @@ class ViewerPage extends StatefulWidget {
 
 class _ViewerPageState extends State<ViewerPage> {
   bool isAnalyzing = false;
+  bool isUploading = false;
+  String analysisStatus = '';
   late Clip clip;
   late VideoPlayerController videoController;
   StreamSubscription? analysisSubscription;
@@ -109,70 +109,150 @@ class _ViewerPageState extends State<ViewerPage> {
     return closestIndex;
   }
 
-  Future<Map<String, dynamic>?> getVideoFrames() async {
+  Future<Map<String, dynamic>?> extractVideoFrames() async {
     try {
-      //var endpoint = "http://10.0.0.134:8080/extract_frames_fast/";
-      var endpoint = "http://143.198.224.186:8080/extract_frames_fast/";
-      var videoFile = File(widget.videoPath!);
+      debugPrint('🎬 Starting local frame extraction...');
 
-      // Upload video file
-      var request = http.MultipartRequest('POST', Uri.parse(endpoint));
-      request.files.add(
-        await http.MultipartFile.fromPath('file', videoFile.path),
-      );
-      var response = await request.send();
+      if (mounted) {
+        setState(() {
+          isUploading = true;
+          analysisStatus = 'Extracting frames locally...';
+        });
+      }
 
-      if (response.statusCode != 200) {
-        debugPrint('? Server error: ${response.statusCode}');
+      final videoFile = File(widget.videoPath!);
+      if (!videoFile.existsSync()) {
+        debugPrint('❌ Video file does not exist: ${widget.videoPath}');
         return null;
       }
 
-      // Save zip to a temp file
-      var bytes = await response.stream.toBytes();
-      var tempDir = Directory.systemTemp.createTempSync();
-      var zipPath = p.join(tempDir.path, 'frames.zip');
-      File(zipPath).writeAsBytesSync(bytes);
+      // Get video metadata first
+      final editor = VideoEditorBuilder(videoPath: widget.videoPath!);
+      final metadata = await editor.getVideoMetadata();
 
-      print(zipPath);
-
-      // Extract zip to persistent directory
-      var persistentFramesDir = Directory.systemTemp.createTempSync(
-        'video_frames',
+      debugPrint(
+        '📊 Video metadata: ${metadata.width}x${metadata.height}, ${metadata.duration}ms, ${metadata.rotation}°',
       );
 
-      print(persistentFramesDir.path);
-      var archive = ZipDecoder().decodeBytes(File(zipPath).readAsBytesSync());
-      print(archive.length.toString());
-      Map<String, dynamic> metadata = {};
+      // Calculate frame extraction parameters
+      final videoDurationSeconds = metadata.duration / 1000.0;
+      final targetFPS = 5.0; // Extract 5 frames per second for analysis
+      final totalFramesToExtract = (videoDurationSeconds * targetFPS).ceil();
+      final frameInterval = metadata.duration / totalFramesToExtract;
 
-      for (var file in archive) {
-        if (file.isFile) {
-          var filename = file.name;
-          var content = file.content as List<int>;
+      debugPrint(
+        '🎯 Extracting $totalFramesToExtract frames at ${targetFPS}fps interval',
+      );
 
-          if (filename == 'metadata.json') {
-            metadata = jsonDecode(utf8.decode(content));
-          } else if (filename.startsWith('frame_') &&
-              filename.endsWith('.jpg')) {
-            // Save frame to disk instead of memory
-            var framePath = p.join(persistentFramesDir.path, filename);
-            File(framePath).writeAsBytesSync(content);
+      // Create temporary directory for frames
+      final framesDir = Directory.systemTemp.createTempSync('hooplab_frames');
+
+      List<Map<String, dynamic>> frameData = [];
+
+      // Extract frames at regular intervals
+      for (int i = 0; i < totalFramesToExtract; i++) {
+        final positionMs = (i * frameInterval).round();
+        final frameName = 'frame_${i.toString().padLeft(6, '0')}.jpg';
+        final framePath = p.join(framesDir.path, frameName);
+
+        try {
+          // Generate thumbnail at specific timestamp
+          final thumbnailPath = await editor.generateThumbnail(
+            positionMs: positionMs,
+            quality: 85,
+            width: metadata.width,
+            height: metadata.height,
+            outputPath: framePath,
+          );
+
+          if (thumbnailPath != null && File(thumbnailPath).existsSync()) {
+            frameData.add({
+              'frame_index': i,
+              'extracted_index': i,
+              'timestamp': positionMs / 1000.0,
+              'filename': frameName,
+              'path': thumbnailPath,
+            });
+
+            debugPrint(
+              '✅ Extracted frame $i at ${(positionMs / 1000.0).toStringAsFixed(2)}s',
+            );
+          } else {
+            debugPrint(
+              '⚠️ Failed to extract frame $i at ${(positionMs / 1000.0).toStringAsFixed(2)}s',
+            );
           }
+
+          // Update progress
+          if (mounted) {
+            setState(() {
+              analysisStatus =
+                  'Extracting frames... ${i + 1}/$totalFramesToExtract';
+            });
+          }
+        } catch (e) {
+          debugPrint('❌ Error extracting frame $i: $e');
+          continue;
         }
       }
 
-      // Add the frames directory path to metadata
-      metadata['frames_directory'] = persistentFramesDir.path;
+      final extractedFramesCount = frameData.length;
+      debugPrint('🎉 Successfully extracted $extractedFramesCount frames');
 
-      // Clean up temp zip
-      File(zipPath).deleteSync();
-      tempDir.deleteSync();
-      print(metadata.length);
-      return metadata;
+      // Build metadata response similar to server format
+      final responseMetadata = {
+        'fps': metadata.duration > 0
+            ? (totalFramesToExtract * 1000.0) / metadata.duration
+            : 30.0,
+        'total_frames': totalFramesToExtract,
+        'extracted_frames': extractedFramesCount,
+        'frame_interval': frameInterval,
+        'width': metadata.width,
+        'height': metadata.height,
+        'frames_directory': framesDir.path,
+        'frames': frameData,
+      };
+
+      debugPrint(
+        '📋 Frame extraction complete: ${extractedFramesCount} frames ready for analysis',
+      );
+
+      return responseMetadata;
     } catch (e) {
-      debugPrint('? Error fetching video frames: $e');
+      debugPrint('❌ Error in local frame extraction: $e');
+      if (mounted) {
+        _showErrorDialog(
+          'Frame Extraction Failed',
+          'Failed to extract frames locally: $e',
+        );
+      }
       return null;
+    } finally {
+      if (mounted) {
+        setState(() {
+          isUploading = false;
+          analysisStatus = '';
+        });
+      }
     }
+  }
+
+  void _showErrorDialog(String title, String message) {
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   List<Detection> getCurrentFrameDetections() {
@@ -265,7 +345,7 @@ class _ViewerPageState extends State<ViewerPage> {
     final videoDuration =
         videoDurationMs ?? videoController.value.duration.inMilliseconds;
 
-    final Map<String, dynamic>? frameResponse = await getVideoFrames();
+    final Map<String, dynamic>? frameResponse = await extractVideoFrames();
 
     if (frameResponse == null) {
       print("FRAME RESPONSE EMPTY");
@@ -305,17 +385,15 @@ class _ViewerPageState extends State<ViewerPage> {
     for (int idx = 0; idx < frameResponse!['extracted_frames']; idx += 1) {
       try {
         final frameNumber = idx;
-        final preciseTimestampMs =
-            (frameResponse['frames'][idx]['timestamp'] as double) * 1000;
+        final frameInfo = frameResponse['frames'][idx];
+        final preciseTimestampMs = (frameInfo['timestamp'] as double) * 1000;
 
         debugPrint(
           '\n🎯 Processing frame #$frameNumber at ${preciseTimestampMs}ms...',
         );
 
-        // With this:
-        final framesDir = frameResponse['frames_directory'] as String;
-        final frameName = frameResponse['frames'][idx]['filename'] as String;
-        final framePath = p.join(framesDir, frameName);
+        // Use the direct path from frame info
+        final framePath = frameInfo['path'] as String;
         final frameBytes = File(framePath).readAsBytesSync();
         totalFramesToProcess = frameResponse['extracted_frames'];
 
