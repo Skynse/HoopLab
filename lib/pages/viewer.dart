@@ -187,18 +187,22 @@ class _ViewerPageState extends State<ViewerPage> {
   Timer? _seekDebounceTimer;
   // Safe video seeking with bounds checking
   Future<void> safeSeekTo(Duration position) async {
-    _seekDebounceTimer?.cancel();
-    _seekDebounceTimer = Timer(const Duration(milliseconds: 100), () async {
-      if (!mounted || !videoController.value.isInitialized) {
-        return;
-      }
+    if (!videoController.value.isInitialized) {
+      debugPrint('❌ Cannot seek: video not initialized');
+      return;
+    }
 
-      try {
-        await videoController.seekTo(position);
-      } catch (e) {
-        debugPrint('❌ Error seeking to ${position.inMilliseconds}ms: $e');
-      }
-    });
+    final duration = videoController.value.duration;
+    final clampedPosition = Duration(
+      milliseconds: position.inMilliseconds.clamp(0, duration.inMilliseconds),
+    );
+
+    try {
+      await videoController.seekTo(clampedPosition);
+      debugPrint('✅ Seeked to ${clampedPosition.inSeconds}s');
+    } catch (e) {
+      debugPrint('❌ Seek error: $e');
+    }
   }
 
   void initializeClip() {
@@ -459,18 +463,24 @@ class _ViewerPageState extends State<ViewerPage> {
                     children: [
                       ElevatedButton.icon(
                         onPressed: () async {
-                          if (videoController.value.position >=
-                              videoController.value.duration) {
-                            // Video has ended - seek to beginning AND play
-                            await safeSeekTo(Duration.zero);
-                            await videoController.play();
-                          } else {
-                            // Normal play/pause toggle
-                            if (videoController.value.isPlaying) {
-                              videoController.pause();
+                          if (!videoController.value.isInitialized) return;
+
+                          try {
+                            if (videoController.value.position >=
+                                videoController.value.duration) {
+                              // Video has ended - seek to beginning AND play
+                              await videoController.seekTo(Duration.zero);
+                              await videoController.play();
                             } else {
-                              videoController.play();
+                              // Normal play/pause toggle
+                              if (videoController.value.isPlaying) {
+                                await videoController.pause();
+                              } else {
+                                await videoController.play();
+                              }
                             }
+                          } catch (e) {
+                            debugPrint('❌ Play/Pause error: $e');
                           }
                         },
                         icon: Icon(
