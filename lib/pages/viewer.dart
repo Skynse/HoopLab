@@ -645,7 +645,7 @@ class _ViewerPageState extends State<ViewerPage> {
             ),
 
             // Analysis overlay
-            if (isAnalyzing)
+            if (isAnalyzing || isUploading)
               Container(
                 color: Colors.black.withOpacity(0.7),
                 child: Center(
@@ -658,31 +658,43 @@ class _ViewerPageState extends State<ViewerPage> {
                         children: [
                           const CircularProgressIndicator(),
                           const SizedBox(height: 16),
-                          const Text(
-                            'Analyzing Video...',
-                            style: TextStyle(
+                          Text(
+                            isUploading
+                                ? 'Extracting Frames...'
+                                : 'Analyzing Video...',
+                            style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                           const SizedBox(height: 8),
-                          Text(
-                            'Processing: $framesProcessed/$totalFramesToProcess frames',
-                          ),
-                          Text('Detections found: $totalDetections'),
-                          if (videoFramerate != null)
+                          if (isUploading && analysisStatus.isNotEmpty) ...[
                             Text(
-                              'Framerate: ${videoFramerate!.toStringAsFixed(1)} fps',
+                              analysisStatus,
+                              style: const TextStyle(fontSize: 14),
+                              textAlign: TextAlign.center,
                             ),
-                          if (totalFramesToProcess > 0) ...[
-                            const SizedBox(height: 8),
-                            LinearProgressIndicator(
-                              value: framesProcessed / totalFramesToProcess,
-                            ),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: 12),
+                          ],
+                          if (!isUploading) ...[
                             Text(
-                              '${((framesProcessed / totalFramesToProcess) * 100).toStringAsFixed(1)}% Complete',
+                              'Processing: $framesProcessed/$totalFramesToProcess frames',
                             ),
+                            Text('Detections found: $totalDetections'),
+                            if (videoFramerate != null)
+                              Text(
+                                'Framerate: ${videoFramerate!.toStringAsFixed(1)} fps',
+                              ),
+                            if (totalFramesToProcess > 0) ...[
+                              const SizedBox(height: 8),
+                              LinearProgressIndicator(
+                                value: framesProcessed / totalFramesToProcess,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                '${((framesProcessed / totalFramesToProcess) * 100).toStringAsFixed(1)}% Complete',
+                              ),
+                            ],
                           ],
                           const SizedBox(height: 16),
                           ElevatedButton(
@@ -690,6 +702,8 @@ class _ViewerPageState extends State<ViewerPage> {
                               analysisSubscription?.cancel();
                               setState(() {
                                 isAnalyzing = false;
+                                isUploading = false;
+                                analysisStatus = '';
                               });
                             },
                             child: const Text('Cancel'),
