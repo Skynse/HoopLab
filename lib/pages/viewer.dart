@@ -42,6 +42,12 @@ class _ViewerPageState extends State<ViewerPage> {
   Timer? _frameUpdateTimer;
   int _lastKnownFrame = -1;
   bool _isVideoListenerActive = false;
+
+  // Trajectory display controls
+  bool _showOptimalTrajectory = true;
+  bool _showBallPath = true;
+  bool _calculateInFrameReference =
+      false; // true = frame-of-reference, false = real-time
   @override
   void initState() {
     super.initState();
@@ -499,11 +505,115 @@ class _ViewerPageState extends State<ViewerPage> {
                         aspectRatio: videoController.value.aspectRatio,
                         allFrames: clip.frames,
                         currentFrame: curFrame,
+                        showTrajectories: _showBallPath,
+                        showEstimatedPath: _showOptimalTrajectory,
+                        calculateInFrameReference: _calculateInFrameReference,
                       ),
                     ),
                   ),
                 );
               },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrajectoryControlDrawer() {
+    return Drawer(
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          const DrawerHeader(
+            decoration: BoxDecoration(color: Colors.blue),
+            child: Text(
+              'Trajectory Controls',
+              style: TextStyle(color: Colors.white, fontSize: 24),
+            ),
+          ),
+
+          // Ball Path Toggle
+          ListTile(
+            leading: Icon(
+              _showBallPath ? Icons.visibility : Icons.visibility_off,
+              color: _showBallPath ? Colors.green : Colors.grey,
+            ),
+            title: const Text('Show Ball Path'),
+            subtitle: const Text('Display real-time ball trajectory'),
+            trailing: Switch(
+              value: _showBallPath,
+              onChanged: (value) {
+                setState(() {
+                  _showBallPath = value;
+                });
+              },
+            ),
+          ),
+
+          const Divider(),
+
+          // Optimal Trajectory Toggle
+          ListTile(
+            leading: Icon(
+              _showOptimalTrajectory ? Icons.timeline : Icons.timeline_outlined,
+              color: _showOptimalTrajectory ? Colors.orange : Colors.grey,
+            ),
+            title: const Text('Show Optimal Trajectory'),
+            subtitle: const Text('Display predicted optimal shot path'),
+            trailing: Switch(
+              value: _showOptimalTrajectory,
+              onChanged: (value) {
+                setState(() {
+                  _showOptimalTrajectory = value;
+                });
+              },
+            ),
+          ),
+
+          const Divider(),
+
+          // Calculation Mode
+          ListTile(
+            leading: Icon(
+              _calculateInFrameReference ? Icons.camera_alt : Icons.speed,
+              color: _calculateInFrameReference ? Colors.purple : Colors.blue,
+            ),
+            title: const Text('Calculation Mode'),
+            subtitle: Text(
+              _calculateInFrameReference
+                  ? 'Frame-of-reference calculation'
+                  : 'Real-time calculation',
+            ),
+            trailing: Switch(
+              value: _calculateInFrameReference,
+              onChanged: (value) {
+                setState(() {
+                  _calculateInFrameReference = value;
+                });
+              },
+            ),
+          ),
+
+          const Divider(),
+
+          // Info section
+          const Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Calculation Modes:',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  '• Real-time: Calculations update as video plays\n'
+                  '• Frame-of-reference: Calculations based on current frame position',
+                  style: TextStyle(fontSize: 14),
+                ),
+              ],
             ),
           ),
         ],
@@ -522,7 +632,16 @@ class _ViewerPageState extends State<ViewerPage> {
         appBar: AppBar(
           title: const Text("Video Analysis"),
           backgroundColor: Colors.blue,
+          actions: [
+            Builder(
+              builder: (context) => IconButton(
+                icon: const Icon(Icons.settings),
+                onPressed: () => Scaffold.of(context).openEndDrawer(),
+              ),
+            ),
+          ],
         ),
+        endDrawer: _buildTrajectoryControlDrawer(),
         body: Stack(
           children: [
             // Main content

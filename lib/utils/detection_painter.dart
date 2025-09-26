@@ -36,6 +36,7 @@ class DetectionPainter extends CustomPainter {
   final int currentFrame;
   final bool showTrajectories;
   final bool? showEstimatedPath;
+  final bool calculateInFrameReference;
 
   // Physics constants for ball trajectory
   static const double gravity = 9.81; // m/s^2 (adjust scale as needed)
@@ -51,6 +52,7 @@ class DetectionPainter extends CustomPainter {
     required this.currentFrame,
     this.showEstimatedPath,
     this.showTrajectories = true,
+    this.calculateInFrameReference = false,
   });
 
   @override
@@ -133,13 +135,20 @@ class DetectionPainter extends CustomPainter {
 
     // Show trajectory for a reasonable time window (last 3 seconds or 90 frames)
     final int maxFramesToShow = 90;
-    final int startFrame = (currentFrame - maxFramesToShow).clamp(
-      0,
-      currentFrame,
-    );
+    int startFrame, endFrame;
+
+    if (calculateInFrameReference) {
+      // Frame-of-reference mode: only show trajectory up to current frame
+      startFrame = (currentFrame - maxFramesToShow).clamp(0, currentFrame);
+      endFrame = currentFrame;
+    } else {
+      // Real-time mode: show full trajectory window
+      startFrame = (currentFrame - maxFramesToShow).clamp(0, currentFrame);
+      endFrame = currentFrame;
+    }
 
     // Collect ball positions in chronological order
-    for (int i = startFrame; i <= currentFrame && i < allFrames.length; i++) {
+    for (int i = startFrame; i <= endFrame && i < allFrames.length; i++) {
       final frame = allFrames[i];
 
       // Only process ball detections
@@ -509,6 +518,9 @@ class DetectionPainter extends CustomPainter {
     double offsetX,
     double offsetY,
   ) {
+    // Only show predictions if enabled
+    if (showEstimatedPath != true) return;
+
     // Get current hoop position (adaptive detection)
     final hoopPosition = _detectHoopPosition(scaleX, scaleY, offsetX, offsetY);
     if (hoopPosition == null) return;
@@ -539,8 +551,10 @@ class DetectionPainter extends CustomPainter {
 
       if (trajectoryData.length < 3) continue;
 
-      // Predict trajectory
-      final prediction = _predictBallTrajectory(trajectoryData, hoopPosition);
+      // Predict trajectory based on calculation mode
+      final prediction = calculateInFrameReference
+          ? _predictBallTrajectoryFromFrame(trajectoryData, hoopPosition)
+          : _predictBallTrajectory(trajectoryData, hoopPosition);
 
       // Draw predicted path
       _drawPredictedPath(canvas, prediction, _getTrackColor(trackId));
@@ -755,6 +769,110 @@ class DetectionPainter extends CustomPainter {
       confidence,
       entryPoint,
     );
+  }
+
+  PredictionResult _predictBallTrajectoryFromFrame(
+    List<TrajectoryPoint> points,
+    Offset hoopPosition,
+  ) {
+    if (points.length < 3) {
+      return PredictionResult([], false, 0.0, null);
+    }
+
+    // Frame-of-reference calculation: Use the trajectory data at the current frame position
+    // This provides a stable calculation that doesn't change as the video plays
+    final currentFramePoint = points.last;
+
+    // Use more points for better velocity estimation in frame mode
+    final analysisPoints = points.length > 8
+        ? points.sublist(points.length - 8)
+        : points;
+
+    // Calculate velocity using polynomial fitting for better accuracy
+    Offset frameVelocity = _calculateFrameBasedVelocity(analysisPoints);
+
+    // Predict trajectory using physics with frame-based velocity
+    final List<Offset> predictedPath = [];
+
+    double currentX = currentFramePoint.position.dx;
+    double currentY = currentFramePoint.position.dy;
+    double velocityX = frameVelocity.dx;
+    double velocityY = frameVelocity.dy;
+
+    const double timeStep = 0.016; // ~60 FPS
+    const int maxSteps = 240; // ~4 seconds prediction for frame mode
+
+    bool willEnterHoop = false;
+    Offset? entryPoint;
+
+    for (int step = 0; step < maxSteps; step++) {
+      // Apply gravity (convert to pixels)
+      velocityY += (gravity * pixelsPerMeter * timeStep);
+
+      // Update position
+      currentX += velocityX * timeStep;
+      currentY += velocityY * timeStep;
+
+      final currentPos = Offset(currentX, currentY);
+      predictedPath.add(currentPos);
+
+      // Check if ball enters hoop area
+      final distanceToHoop = (currentPos - hoopPosition).distance;
+      if (distanceToHoop < 30 && !willEnterHoop) {
+        // Within hoop radius
+        willEnterHoop = true;
+        entryPoint = currentPos;
+      }
+
+      // Stop if ball goes too far down (ground level)
+      if (currentY > videoDisplayHeight(1.0) + 100) {
+        break;
+      }
+    }
+
+    // Higher confidence for frame-based calculations due to stability
+    double confidence = _calculateTrajectoryConfidence(analysisPoints) * 1.2;
+    confidence = confidence.clamp(0.0, 1.0);
+
+    return PredictionResult(
+      predictedPath,
+      willEnterHoop,
+      confidence,
+      entryPoint,
+    );
+  }
+
+  Offset _calculateFrameBasedVelocity(List<TrajectoryPoint> points) {
+    if (points.length < 3) return Offset.zero;
+
+    // Use weighted average with emphasis on recent points
+    double totalWeightX = 0.0, totalWeightY = 0.0;
+    double weightedVelX = 0.0, weightedVelY = 0.0;
+
+    for (int i = 1; i < points.length; i++) {
+      final dt = points[i].timestamp - points[i - 1].timestamp;
+      if (dt <= 0) continue;
+
+      final dx = points[i].position.dx - points[i - 1].position.dx;
+      final dy = points[i].position.dy - points[i - 1].position.dy;
+
+      final velX = dx / dt;
+      final velY = dy / dt;
+
+      // Weight more recent velocities higher
+      final weight = i.toDouble() / points.length;
+
+      weightedVelX += velX * weight;
+      weightedVelY += velY * weight;
+      totalWeightX += weight;
+      totalWeightY += weight;
+    }
+
+    if (totalWeightX > 0 && totalWeightY > 0) {
+      return Offset(weightedVelX / totalWeightX, weightedVelY / totalWeightY);
+    }
+
+    return Offset.zero;
   }
 
   double _calculateTrajectoryConfidence(List<TrajectoryPoint> points) {
