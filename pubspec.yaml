@@ -45,6 +45,7 @@ dependencies:
   archive: ^4.0.7
   easy_video_editor: ^0.1.2
   better_player_plus: ^1.1.0
+  wakelock_plus: ^1.4.0
 
 dev_dependencies:
   flutter_test:
