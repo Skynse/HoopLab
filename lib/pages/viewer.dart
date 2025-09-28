@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
 import 'package:hooplab/utils/detection_painter.dart';
 import 'package:hooplab/widgets/timeline.dart';
-import 'package:video_player/video_player.dart';
+import 'package:better_player_plus/better_player_plus.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
 
 import 'package:path/path.dart' as p;
@@ -24,7 +24,8 @@ class _ViewerPageState extends State<ViewerPage> {
   bool isUploading = false;
   String analysisStatus = '';
   late Clip clip;
-  late VideoPlayerController videoController;
+  late BetterPlayerController videoController;
+  late BetterPlayerDataSource betterPlayerDataSource;
   StreamSubscription? analysisSubscription;
   YOLO? yoloModel;
   int totalFramesToProcess = 0;
@@ -62,11 +63,24 @@ class _ViewerPageState extends State<ViewerPage> {
     if (_isVideoListenerActive) return;
     _isVideoListenerActive = true;
 
-    videoController.addListener(_onVideoPositionChanged);
+    videoController.addEventsListener((event) {
+      if (event.betterPlayerEventType == BetterPlayerEventType.progress) {
+        _onVideoPositionChanged();
+      }
+    });
   }
 
   void _onVideoPositionChanged() {
-    if (!mounted || !videoController.value.isInitialized) return;
+    final videoPlayerController = videoController.videoPlayerController;
+    if (!mounted || videoPlayerController == null) return;
+
+    // Check if video player is properly initialized
+    try {
+      // Use duration as a proxy for initialization
+      if (videoPlayerController.value.duration == Duration.zero) return;
+    } catch (e) {
+      return; // Fallback if initialization check fails
+    }
 
     // Throttle UI updates to reduce jitter
     _frameUpdateTimer?.cancel();
@@ -75,8 +89,7 @@ class _ViewerPageState extends State<ViewerPage> {
 
       if (clip.frames.isNotEmpty) {
         final currentTimeSeconds =
-            videoController.value.position.inMilliseconds / 1000.0;
-        final frameRate = videoFramerate ?? 30.0;
+            videoPlayerController.value.position.inMilliseconds / 1000.0;
 
         // Find closest frame by timestamp instead of direct calculation
         int targetFrame = _findClosestFrameIndex(currentTimeSeconds);
@@ -273,14 +286,25 @@ class _ViewerPageState extends State<ViewerPage> {
   Timer? _seekDebounceTimer;
   // Safe video seeking with bounds checking
   Future<void> safeSeekTo(Duration position) async {
-    if (!videoController.value.isInitialized) {
-      debugPrint('❌ Cannot seek: video not initialized');
+    final videoPlayerController = videoController.videoPlayerController;
+    if (videoPlayerController == null) {
+      debugPrint('❌ Cannot seek: video controller not available');
       return;
     }
 
-    final duration = videoController.value.duration;
+    try {
+      if (!videoPlayerController.value.initialized) {
+        debugPrint('❌ Cannot seek: video not initialized');
+        return;
+      }
+    } catch (e) {
+      debugPrint('❌ Cannot seek: initialization check failed');
+      return;
+    }
+
+    final duration = videoPlayerController.value.duration;
     final clampedPosition = Duration(
-      milliseconds: position.inMilliseconds.clamp(0, duration.inMilliseconds),
+      milliseconds: position.inMilliseconds.clamp(0, duration!.inMilliseconds),
     );
 
     try {
@@ -301,12 +325,29 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   void initializeVideoPlayer() {
-    videoController = VideoPlayerController.file(File(widget.videoPath!))
-      ..initialize().then((_) {
+    betterPlayerDataSource = BetterPlayerDataSource(
+      BetterPlayerDataSourceType.file,
+      widget.videoPath!,
+    );
+
+    videoController = BetterPlayerController(
+      BetterPlayerConfiguration(
+        autoPlay: false,
+        looping: false,
+        controlsConfiguration: const BetterPlayerControlsConfiguration(
+          showControls: false,
+        ),
+      ),
+      betterPlayerDataSource: betterPlayerDataSource,
+    );
+
+    videoController.addEventsListener((event) {
+      if (event.betterPlayerEventType == BetterPlayerEventType.initialized) {
         if (mounted) {
           setState(() {});
         }
-      });
+      }
+    });
   }
 
   void initializeYoloModel() async {
@@ -332,11 +373,8 @@ class _ViewerPageState extends State<ViewerPage> {
     _seekDebounceTimer?.cancel();
     analysisSubscription?.cancel();
 
-    // Properly remove video listener
-    if (_isVideoListenerActive) {
-      videoController.removeListener(_onVideoPositionChanged);
-      _isVideoListenerActive = false;
-    }
+    // BetterPlayerController handles listeners internally
+    _isVideoListenerActive = false;
 
     videoController.dispose();
     super.dispose();
@@ -349,7 +387,13 @@ class _ViewerPageState extends State<ViewerPage> {
     }
 
     final videoDuration =
-        videoDurationMs ?? videoController.value.duration.inMilliseconds;
+        videoDurationMs ??
+        (videoController
+                .videoPlayerController
+                ?.value
+                .duration!
+                .inMilliseconds ??
+            0);
 
     final Map<String, dynamic>? frameResponse = await extractVideoFrames();
 
@@ -378,16 +422,14 @@ class _ViewerPageState extends State<ViewerPage> {
 
     videoWidth = frameResponse?['width'] as int?;
     videoHeight = frameResponse?['height'] as int?;
-    double videoFramerate = (frameResponse?['fps'] as double);
+    videoFramerate = (frameResponse?['fps'] as double?);
     videoDurationMs =
         ((frameResponse?['total_frames'] as int?) ?? 0) *
-        (1000 / (videoFramerate)).round();
+        (1000 / (videoFramerate ?? 30.0)).round();
 
     // Calculate frame interval based on desired analysis frequency
-    final analyzeEveryNthFrame = (videoFramerate * 0.1)
+    final analyzeEveryNthFrame = ((videoFramerate ?? 30.0) * 0.1)
         .round(); // Analyze every 0.5 seconds
-    final frameIntervalMs = (1000 / videoFramerate * analyzeEveryNthFrame)
-        .round();
     for (int idx = 0; idx < frameResponse!['extracted_frames']; idx += 1) {
       try {
         final frameNumber = idx;
@@ -480,11 +522,14 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   Widget _buildVideoPlayerWithOverlay() {
+    final videoPlayerController = videoController.videoPlayerController;
+    final aspectRatio = videoPlayerController?.value.aspectRatio ?? 16 / 9;
+
     return AspectRatio(
-      aspectRatio: videoController.value.aspectRatio,
+      aspectRatio: aspectRatio,
       child: Stack(
         children: [
-          VideoPlayer(videoController),
+          BetterPlayer(controller: videoController),
           // Detection overlay
           Positioned.fill(
             child: LayoutBuilder(
@@ -502,7 +547,7 @@ class _ViewerPageState extends State<ViewerPage> {
                           constraints.maxWidth,
                           constraints.maxHeight,
                         ),
-                        aspectRatio: videoController.value.aspectRatio,
+                        aspectRatio: aspectRatio,
                         allFrames: clip.frames,
                         currentFrame: curFrame,
                         showTrajectories: _showBallPath,
@@ -623,7 +668,16 @@ class _ViewerPageState extends State<ViewerPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!videoController.value.isInitialized) {
+    final videoPlayerController = videoController.videoPlayerController;
+    if (videoPlayerController == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    try {
+      if (!videoPlayerController.value.initialized) {
+        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      }
+    } catch (e) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
@@ -660,17 +714,26 @@ class _ViewerPageState extends State<ViewerPage> {
                     children: [
                       ElevatedButton.icon(
                         onPressed: () async {
-                          if (!videoController.value.isInitialized) return;
+                          final videoPlayerController =
+                              videoController.videoPlayerController;
+                          if (videoPlayerController == null) return;
 
                           try {
-                            if (videoController.value.position >=
-                                videoController.value.duration) {
+                            if (!videoPlayerController.value.initialized)
+                              return;
+                          } catch (e) {
+                            return;
+                          }
+
+                          try {
+                            if (videoPlayerController.value.position >=
+                                videoPlayerController.value.duration!) {
                               // Video has ended - seek to beginning AND play
                               await videoController.seekTo(Duration.zero);
                               await videoController.play();
                             } else {
                               // Normal play/pause toggle
-                              if (videoController.value.isPlaying) {
+                              if (videoPlayerController.value.isPlaying) {
                                 await videoController.pause();
                               } else {
                                 await videoController.play();
@@ -681,12 +744,22 @@ class _ViewerPageState extends State<ViewerPage> {
                           }
                         },
                         icon: Icon(
-                          videoController.value.isPlaying
+                          (videoController
+                                      .videoPlayerController
+                                      ?.value
+                                      .isPlaying ??
+                                  false)
                               ? Icons.pause
                               : Icons.play_arrow,
                         ),
                         label: Text(
-                          videoController.value.isPlaying ? "Pause" : "Play",
+                          (videoController
+                                      .videoPlayerController
+                                      ?.value
+                                      .isPlaying ??
+                                  false)
+                              ? "Pause"
+                              : "Play",
                         ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.blue,

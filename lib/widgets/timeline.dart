@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
-import 'package:video_player/video_player.dart';
+import 'package:better_player_plus/better_player_plus.dart';
 
 class TimeLine extends StatefulWidget {
   const TimeLine({
@@ -14,7 +14,7 @@ class TimeLine extends StatefulWidget {
   });
 
   final Clip? clip;
-  final VideoPlayerController videoController;
+  final BetterPlayerController videoController;
   final List<File>? thumbnails;
 
   @override
@@ -29,14 +29,18 @@ class _TimeLineState extends State<TimeLine> {
   @override
   void initState() {
     super.initState();
-    widget.videoController.addListener(_onVideoPositionChanged);
+    widget.videoController.addEventsListener((event) {
+      if (event.betterPlayerEventType == BetterPlayerEventType.progress) {
+        _onVideoPositionChanged();
+      }
+    });
     _updateSliderValue();
   }
 
   @override
   void dispose() {
     _seekDebounceTimer?.cancel();
-    widget.videoController.removeListener(_onVideoPositionChanged);
+    // BetterPlayerController handles listeners internally
     super.dispose();
   }
 
@@ -47,15 +51,26 @@ class _TimeLineState extends State<TimeLine> {
   }
 
   void _updateSliderValue() {
-    if (!widget.videoController.value.isInitialized) return;
+    final videoPlayerController = widget.videoController.videoPlayerController;
+    if (videoPlayerController == null) return;
 
-    final position = widget.videoController.value.position.inSeconds.toDouble();
-    final duration = widget.videoController.value.duration.inSeconds.toDouble();
+    try {
+      // Use duration as a proxy for initialization
+      if (videoPlayerController.value.duration == Duration.zero) return;
 
-    if (duration > 0 && position != _sliderValue) {
-      setState(() {
-        _sliderValue = position.clamp(0.0, duration);
-      });
+      final position = videoPlayerController.value.position.inSeconds
+          .toDouble();
+      final duration = videoPlayerController.value.duration!.inSeconds
+          .toDouble();
+
+      if (duration > 0 && position != _sliderValue) {
+        setState(() {
+          _sliderValue = position.clamp(0.0, duration);
+        });
+      }
+    } catch (e) {
+      // Silently handle initialization issues
+      return;
     }
   }
 
@@ -122,7 +137,13 @@ class _TimeLineState extends State<TimeLine> {
                         .where((frame) => frame.detections.isNotEmpty)
                         .map((frame) {
                           final videoDuration =
-                              widget.videoController.value.duration.inSeconds;
+                              widget
+                                  .videoController
+                                  .videoPlayerController
+                                  ?.value
+                                  .duration
+                                  ?.inSeconds ??
+                              0;
                           final position = videoDuration > 0
                               ? (frame.timestamp / videoDuration) *
                                     (MediaQuery.of(context).size.width -
@@ -149,10 +170,19 @@ class _TimeLineState extends State<TimeLine> {
                   Slider(
                     value: _sliderValue,
                     min: 0.0,
-                    max: widget.videoController.value.isInitialized
-                        ? widget.videoController.value.duration.inSeconds
-                              .toDouble()
-                        : 1.0,
+                    max: () {
+                      try {
+                        final controller =
+                            widget.videoController.videoPlayerController;
+                        if (controller == null ||
+                            controller.value.duration == Duration.zero) {
+                          return 1.0;
+                        }
+                        return controller.value.duration!.inSeconds.toDouble();
+                      } catch (e) {
+                        return 1.0;
+                      }
+                    }(),
                     onChanged: _onSliderChanged,
                     onChangeEnd: _onSliderChangeEnd,
                     activeColor: Colors.blue,
