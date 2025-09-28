@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
 import 'package:hooplab/utils/detection_painter.dart';
+import 'package:hooplab/utils/frame_cache.dart';
 import 'package:hooplab/widgets/timeline.dart';
 import 'package:better_player_plus/better_player_plus.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
@@ -40,9 +41,10 @@ class _ViewerPageState extends State<ViewerPage> {
   int? videoHeight;
 
   // Performance optimization
-  Timer? _frameUpdateTimer;
-  int _lastKnownFrame = -1;
+  final FrameIndexCache _frameCache = FrameIndexCache();
+  final ValueNotifier<int> _currentFrameNotifier = ValueNotifier<int>(0);
   bool _isVideoListenerActive = false;
+  GlobalKey _detectionOverlayKey = GlobalKey();
 
   // Trajectory display controls
   bool _showOptimalTrajectory = true;
@@ -82,50 +84,27 @@ class _ViewerPageState extends State<ViewerPage> {
       return; // Fallback if initialization check fails
     }
 
-    // Throttle UI updates to reduce jitter
-    _frameUpdateTimer?.cancel();
-    _frameUpdateTimer = Timer(const Duration(milliseconds: 16), () {
-      if (!mounted) return;
+    if (clip.frames.isNotEmpty && _frameCache.isBuilt) {
+      final currentTimeSeconds =
+          videoPlayerController.value.position.inMilliseconds / 1000.0;
 
-      if (clip.frames.isNotEmpty) {
-        final currentTimeSeconds =
-            videoPlayerController.value.position.inMilliseconds / 1000.0;
+      // Use efficient binary search from frame cache
+      int targetFrame = _frameCache.findClosestFrame(currentTimeSeconds);
+      targetFrame = targetFrame.clamp(0, clip.frames.length - 1);
 
-        // Find closest frame by timestamp instead of direct calculation
-        int targetFrame = _findClosestFrameIndex(currentTimeSeconds);
-        targetFrame = targetFrame.clamp(0, clip.frames.length - 1);
-
-        // Only update if frame actually changed
-        if (curFrame != targetFrame && targetFrame != _lastKnownFrame) {
-          curFrame = targetFrame;
-          _lastKnownFrame = targetFrame;
-          setState(() {});
-        }
-      } else {
-        // Only update UI if there's an actual change
-        if (_lastKnownFrame != -1) {
-          _lastKnownFrame = -1;
-          setState(() {});
-        }
-      }
-    });
-  }
-
-  int _findClosestFrameIndex(double currentTimeSeconds) {
-    if (clip.frames.isEmpty) return 0;
-
-    int closestIndex = 0;
-    double minDifference = double.infinity;
-
-    for (int i = 0; i < clip.frames.length; i++) {
-      final difference = (clip.frames[i].timestamp - currentTimeSeconds).abs();
-      if (difference < minDifference) {
-        minDifference = difference;
-        closestIndex = i;
+      // Only update if frame actually changed
+      if (curFrame != targetFrame) {
+        curFrame = targetFrame;
+        // Update via ValueNotifier instead of setState
+        _currentFrameNotifier.value = targetFrame;
       }
     }
+  }
 
-    return closestIndex;
+  void _rebuildFrameCache() {
+    if (clip.frames.isNotEmpty) {
+      _frameCache.buildCache(clip.frames);
+    }
   }
 
   Future<Map<String, dynamic>?> extractVideoFrames() async {
@@ -274,13 +253,19 @@ class _ViewerPageState extends State<ViewerPage> {
     );
   }
 
-  List<Detection> getCurrentFrameDetections() {
-    if (clip.frames.isEmpty || curFrame < 0 || curFrame >= clip.frames.length) {
+  List<Detection> _getCurrentFrameDetections(int frameIndex) {
+    if (clip.frames.isEmpty ||
+        frameIndex < 0 ||
+        frameIndex >= clip.frames.length) {
       return [];
     }
 
-    // Use the already calculated current frame instead of recalculating
-    return clip.frames[curFrame].detections;
+    return clip.frames[frameIndex].detections;
+  }
+
+  // Keep the old method for compatibility
+  List<Detection> getCurrentFrameDetections() {
+    return _getCurrentFrameDetections(curFrame);
   }
 
   Timer? _seekDebounceTimer;
@@ -369,9 +354,12 @@ class _ViewerPageState extends State<ViewerPage> {
 
   @override
   void dispose() {
-    _frameUpdateTimer?.cancel();
     _seekDebounceTimer?.cancel();
     analysisSubscription?.cancel();
+
+    // Clean up performance optimization resources
+    _currentFrameNotifier.dispose();
+    _frameCache.clear();
 
     // BetterPlayerController handles listeners internally
     _isVideoListenerActive = false;
@@ -447,7 +435,7 @@ class _ViewerPageState extends State<ViewerPage> {
 
         final results = await yoloModel!.predict(
           frameBytes,
-          confidenceThreshold: 0.7,
+          confidenceThreshold: 0.5,
         );
 
         // Parse detections from YOLO results
@@ -523,37 +511,56 @@ class _ViewerPageState extends State<ViewerPage> {
 
   Widget _buildVideoPlayerWithOverlay() {
     final videoPlayerController = videoController.videoPlayerController;
-    final aspectRatio = videoPlayerController?.value.aspectRatio ?? 16 / 9;
+    final aspectRatio = videoPlayerController?.value.aspectRatio;
+
+    // Use actual video dimensions when available, with proper fallback
+    final actualVideoWidth =
+        videoWidth?.toDouble() ??
+        (videoPlayerController?.value.size!.width ?? 1920.0);
+    final actualVideoHeight =
+        videoHeight?.toDouble() ??
+        (videoPlayerController?.value.size!.height ?? 1080.0);
 
     return AspectRatio(
-      aspectRatio: aspectRatio,
+      aspectRatio: aspectRatio!,
       child: Stack(
         children: [
-          BetterPlayer(controller: videoController),
-          // Detection overlay
+          // Video player with its own repaint boundary
+          RepaintBoundary(child: BetterPlayer(controller: videoController)),
+
+          // Detection overlay with separate repaint boundary and ValueNotifier
           Positioned.fill(
             child: LayoutBuilder(
               builder: (context, constraints) {
                 return IgnorePointer(
                   child: RepaintBoundary(
-                    child: CustomPaint(
-                      painter: DetectionPainter(
-                        detections: getCurrentFrameDetections(),
-                        videoSize: Size(
-                          videoWidth?.toDouble() ?? 1080,
-                          videoHeight?.toDouble() ?? 1920,
-                        ),
-                        widgetSize: Size(
-                          constraints.maxWidth,
-                          constraints.maxHeight,
-                        ),
-                        aspectRatio: aspectRatio,
-                        allFrames: clip.frames,
-                        currentFrame: curFrame,
-                        showTrajectories: _showBallPath,
-                        showEstimatedPath: _showOptimalTrajectory,
-                        calculateInFrameReference: _calculateInFrameReference,
-                      ),
+                    key: _detectionOverlayKey,
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: _currentFrameNotifier,
+                      builder: (context, currentFrame, child) {
+                        return CustomPaint(
+                          painter: DetectionPainter(
+                            detections: _getCurrentFrameDetections(
+                              currentFrame,
+                            ),
+                            videoSize: Size(
+                              actualVideoWidth,
+                              actualVideoHeight,
+                            ),
+                            widgetSize: Size(
+                              constraints.maxWidth,
+                              constraints.maxHeight,
+                            ),
+                            aspectRatio: aspectRatio,
+                            allFrames: clip.frames,
+                            currentFrame: currentFrame,
+                            showTrajectories: _showBallPath,
+                            showEstimatedPath: _showOptimalTrajectory,
+                            calculateInFrameReference:
+                                _calculateInFrameReference,
+                          ),
+                        );
+                      },
                     ),
                   ),
                 );
@@ -669,6 +676,7 @@ class _ViewerPageState extends State<ViewerPage> {
   @override
   Widget build(BuildContext context) {
     final videoPlayerController = videoController.videoPlayerController;
+
     if (videoPlayerController == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -785,6 +793,8 @@ class _ViewerPageState extends State<ViewerPage> {
                                 if (mounted) {
                                   setState(() {
                                     clip.frames.add(frameData);
+                                    // Rebuild frame cache for efficient lookup
+                                    _rebuildFrameCache();
                                   });
                                 }
                               },
@@ -793,6 +803,8 @@ class _ViewerPageState extends State<ViewerPage> {
                                 if (mounted) {
                                   setState(() {
                                     isAnalyzing = false;
+                                    // Final frame cache rebuild
+                                    _rebuildFrameCache();
                                   });
                                 }
                               },
