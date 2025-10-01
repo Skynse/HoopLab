@@ -99,7 +99,10 @@ class _ViewerPageState extends State<ViewerPage> {
       final fileSize = await file.length();
 
       // Estimate duration based on file size (rough but reliable)
-      final estimatedDuration = (fileSize / (1024 * 1024 * 2)).clamp(5.0, 120.0); // 2MB per second
+      final estimatedDuration = (fileSize / (1024 * 1024 * 2)).clamp(
+        5.0,
+        120.0,
+      ); // 2MB per second
 
       final metadata = VideoMetadata(
         fps: 30.0, // Standard assumption
@@ -116,7 +119,8 @@ class _ViewerPageState extends State<ViewerPage> {
       // Calculate frame extraction parameters
       final videoDurationMs = (metadata.duration * 1000).round();
       final videoDurationSeconds = metadata.duration;
-      final targetFPS = 15.0; // Extract 15 frames per second for smoother analysis
+      final targetFPS =
+          15.0; // Extract 15 frames per second for smoother analysis
       final totalFramesToExtract = (videoDurationSeconds * targetFPS).ceil();
       final frameIntervalMs = videoDurationMs / totalFramesToExtract;
 
@@ -136,7 +140,9 @@ class _ViewerPageState extends State<ViewerPage> {
         final framePath = p.join(framesDir.path, frameName);
 
         try {
-          debugPrint('🎬 Extracting frame $i at ${positionMs}ms (${(positionMs / 1000.0).toStringAsFixed(2)}s)');
+          debugPrint(
+            '🎬 Extracting frame $i at ${positionMs}ms (${(positionMs / 1000.0).toStringAsFixed(2)}s)',
+          );
 
           // Generate thumbnail at specific timestamp using video_thumbnail
           final thumbnailPath = await VideoThumbnail.thumbnailFile(
@@ -344,7 +350,8 @@ class _ViewerPageState extends State<ViewerPage> {
     // Video metadata handled by CleanVideoPlayer
 
     // Calculate frame interval based on desired analysis frequency
-    final analyzeEveryNthFrame = (30.0 * 0.1).round(); // Analyze every 0.5 seconds
+    final analyzeEveryNthFrame = (30.0 * 0.1)
+        .round(); // Analyze every 0.5 seconds
     for (int idx = 0; idx < frameResponse!['extracted_frames']; idx += 1) {
       try {
         final frameNumber = idx;
@@ -449,16 +456,16 @@ class _ViewerPageState extends State<ViewerPage> {
           ? TrajectoryOverlay(
               frames: clip.frames,
               currentVideoPosition: _currentVideoPosition,
-              videoSize: _videoPlayerKey.currentState?.videoSize ?? const Size(1920, 1080),
+              videoSize:
+                  _videoPlayerKey.currentState?.videoSize ??
+                  const Size(1920, 1080),
             )
           : null,
     );
   }
 
-
   @override
   Widget build(BuildContext context) {
-
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -471,289 +478,317 @@ class _ViewerPageState extends State<ViewerPage> {
         children: [
           Column(
             children: [
-          // Video player section (takes most of the screen)
-          Expanded(
-            flex: 4,
-            child: Container(
-              margin: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black26,
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
+              // Video player section (takes most of the screen)
+              Expanded(
+                child: Container(
+                  color: Colors.black,
+                  child: Center(child: _buildVideoPlayerWithOverlay()),
+                ),
+              ),
+
+              // Control panel
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(20),
+                    topRight: Radius.circular(20),
                   ),
-                ],
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: _buildVideoPlayerWithOverlay(),
-              ),
-            ),
-          ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Analysis button
+                    if (!isAnalyzing && clip.frames.isEmpty)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            setState(() {
+                              isAnalyzing = true;
+                              clip.frames.clear();
+                              totalDetections = 0;
+                              framesProcessed = 0;
+                            });
 
-          // Control panel
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(20),
-                topRight: Radius.circular(20),
-              ),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Analysis button
-                if (!isAnalyzing && clip.frames.isEmpty)
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: () async {
-                        setState(() {
-                          isAnalyzing = true;
-                          clip.frames.clear();
-                          totalDetections = 0;
-                          framesProcessed = 0;
-                        });
-
-                        final subscription = analyzeVideoFrames().listen(
-                          (frameData) {
-                            if (mounted) {
-                              setState(() {
-                                clip.frames.add(frameData);
-                                _frameCache.buildCache(clip.frames);
-                                framesProcessed++;
-                                totalDetections += frameData.detections.length;
-                              });
-                            }
+                            final subscription = analyzeVideoFrames().listen(
+                              (frameData) {
+                                if (mounted) {
+                                  setState(() {
+                                    clip.frames.add(frameData);
+                                    _frameCache.buildCache(clip.frames);
+                                    framesProcessed++;
+                                    totalDetections +=
+                                        frameData.detections.length;
+                                  });
+                                }
+                              },
+                              onDone: () {
+                                if (mounted) {
+                                  setState(() {
+                                    isAnalyzing = false;
+                                  });
+                                }
+                              },
+                              onError: (error) {
+                                debugPrint('❌ Analysis error: $error');
+                                if (mounted) {
+                                  setState(() {
+                                    isAnalyzing = false;
+                                  });
+                                }
+                              },
+                            );
+                            analysisSubscription = subscription;
                           },
-                          onDone: () {
-                            if (mounted) {
-                              setState(() {
-                                isAnalyzing = false;
-                              });
-                            }
-                          },
-                          onError: (error) {
-                            debugPrint('❌ Analysis error: $error');
-                            if (mounted) {
-                              setState(() {
-                                isAnalyzing = false;
-                              });
-                            }
-                          },
-                        );
-                        analysisSubscription = subscription;
-                      },
-                      icon: const Icon(Icons.analytics),
-                      label: const Text("Analyze Shot"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-
-                // Analysis in progress
-                if (isAnalyzing) ...[
-                  Row(
-                    children: [
-                      const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Analyzing frames...',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey[800],
-                              ),
+                          icon: const Icon(Icons.analytics),
+                          label: const Text("Analyze Shot"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            textStyle: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
                             ),
-                            Text(
-                              '$framesProcessed frames • $totalDetections detections',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       ),
-                      TextButton(
-                        onPressed: () {
-                          analysisSubscription?.cancel();
-                          setState(() {
-                            isAnalyzing = false;
-                          });
-                        },
-                        child: const Text("Stop"),
+
+                    // Analysis in progress
+                    if (isAnalyzing) ...[
+                      Row(
+                        children: [
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Analyzing frames...',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey[800],
+                                  ),
+                                ),
+                                Text(
+                                  '$framesProcessed frames • $totalDetections detections',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              analysisSubscription?.cancel();
+                              setState(() {
+                                isAnalyzing = false;
+                              });
+                            },
+                            child: const Text("Stop"),
+                          ),
+                        ],
                       ),
                     ],
-                  ),
-                ],
 
-                // Analysis complete - show results
-                if (!isAnalyzing && clip.frames.isNotEmpty) ...[
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        clip.frames.clear();
-                        totalDetections = 0;
-                        framesProcessed = 0;
-                      });
-                    },
-                    icon: const Icon(Icons.refresh),
-                    label: const Text("Re-analyze"),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.grey[600],
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${clip.frames.length} frames analyzed • $totalDetections detections found',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[600],
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-
-                const SizedBox(height: 12),
-
-                // Video position and controls
-                if (clip.frames.isNotEmpty) ...[
-                  Text(
-                    'Video position: ${_currentVideoPosition.inSeconds}s',
-                    style: const TextStyle(color: Colors.grey),
-                  ),
-                  const SizedBox(height: 8),
-
-                  // Video seek slider
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Column(
-                      children: [
-                        Slider(
-                          value: _currentVideoPosition.inMilliseconds.toDouble(),
-                          max: (_videoPlayerKey.currentState?.duration.inMilliseconds ?? 1000).toDouble(),
-                          onChanged: (value) {
-                            final newPosition = Duration(milliseconds: value.round());
-                            safeSeekTo(newPosition);
-                          },
-                          activeColor: Colors.orange,
-                          inactiveColor: Colors.grey,
+                    // Analysis complete - show results
+                    if (!isAnalyzing && clip.frames.isNotEmpty) ...[
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            clip.frames.clear();
+                            totalDetections = 0;
+                            framesProcessed = 0;
+                          });
+                        },
+                        icon: const Icon(Icons.refresh),
+                        label: const Text("Re-analyze"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.grey[600],
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${clip.frames.length} frames analyzed • $totalDetections detections found',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+
+                    const SizedBox(height: 12),
+
+                    // Video position and controls
+                    if (clip.frames.isNotEmpty) ...[
+                      Text(
+                        'Video position: ${_currentVideoPosition.inSeconds}s',
+                        style: const TextStyle(color: Colors.grey),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // Video seek slider
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Column(
                           children: [
-                            Text(
-                              '${_currentVideoPosition.inSeconds}s',
-                              style: const TextStyle(color: Colors.grey, fontSize: 12),
+                            Slider(
+                              value: _currentVideoPosition.inMilliseconds
+                                  .toDouble(),
+                              max:
+                                  (_videoPlayerKey
+                                              .currentState
+                                              ?.duration
+                                              .inMilliseconds ??
+                                          1000)
+                                      .toDouble(),
+                              onChanged: (value) {
+                                final newPosition = Duration(
+                                  milliseconds: value.round(),
+                                );
+                                safeSeekTo(newPosition);
+                              },
+                              activeColor: Colors.orange,
+                              inactiveColor: Colors.grey,
                             ),
-                            Text(
-                              '${(_videoPlayerKey.currentState?.duration.inSeconds ?? 0)}s',
-                              style: const TextStyle(color: Colors.grey, fontSize: 12),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  '${_currentVideoPosition.inSeconds}s',
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                Text(
+                                  '${(_videoPlayerKey.currentState?.duration.inSeconds ?? 0)}s',
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          IconButton(
+                            onPressed: () {
+                              // Skip back 1 second
+                              final newPosition = Duration(
+                                milliseconds:
+                                    (_currentVideoPosition.inMilliseconds -
+                                            1000)
+                                        .clamp(0, double.infinity)
+                                        .round(),
+                              );
+                              safeSeekTo(newPosition);
+                            },
+                            icon: const Icon(Icons.replay_10),
+                            color: Colors.orange,
+                            iconSize: 32,
+                            tooltip: 'Back 1s',
+                          ),
+                          IconButton(
+                            onPressed: () {
+                              final playerState = _videoPlayerKey.currentState;
+                              playerState?.pause();
+                            },
+                            icon: const Icon(Icons.pause),
+                            color: Colors.orange,
+                            iconSize: 40,
+                          ),
+                          IconButton(
+                            onPressed: () {
+                              final playerState = _videoPlayerKey.currentState;
+                              playerState?.play();
+                            },
+                            icon: const Icon(Icons.play_arrow),
+                            color: Colors.orange,
+                            iconSize: 40,
+                          ),
+                          IconButton(
+                            onPressed: () {
+                              // Skip forward 1 second
+                              final maxDuration =
+                                  _videoPlayerKey
+                                      .currentState
+                                      ?.duration
+                                      .inMilliseconds ??
+                                  10000;
+                              final newPosition = Duration(
+                                milliseconds:
+                                    (_currentVideoPosition.inMilliseconds +
+                                            1000)
+                                        .clamp(0, maxDuration.toDouble())
+                                        .round(),
+                              );
+                              safeSeekTo(newPosition);
+                            },
+                            icon: const Icon(Icons.forward_10),
+                            color: Colors.orange,
+                            iconSize: 32,
+                            tooltip: 'Forward 1s',
+                          ),
+                          IconButton(
+                            onPressed: () {
+                              safeSeekTo(Duration.zero);
+                            },
+                            icon: const Icon(Icons.restart_alt),
+                            color: Colors.orange,
+                            iconSize: 32,
+                            tooltip: 'Restart',
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          // Loading overlay when analyzing
+          if (isAnalyzing || isUploading)
+            Container(
+              color: Colors.black54,
+              child: const Center(
+                child: Card(
+                  margin: EdgeInsets.all(32),
+                  child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 16),
+                        Text(
+                          'Extracting and analyzing frames...',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ],
                     ),
                   ),
-
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        onPressed: () {
-                          // Skip back 1 second
-                          final newPosition = Duration(
-                            milliseconds: (_currentVideoPosition.inMilliseconds - 1000).clamp(0, double.infinity).round()
-                          );
-                          safeSeekTo(newPosition);
-                        },
-                        icon: const Icon(Icons.replay_10, color: Colors.white),
-                        tooltip: 'Back 1s',
-                      ),
-                      IconButton(
-                        onPressed: () {
-                          final playerState = _videoPlayerKey.currentState;
-                          playerState?.pause();
-                        },
-                        icon: const Icon(Icons.pause, color: Colors.white),
-                      ),
-                      IconButton(
-                        onPressed: () {
-                          final playerState = _videoPlayerKey.currentState;
-                          playerState?.play();
-                        },
-                        icon: const Icon(Icons.play_arrow, color: Colors.white),
-                      ),
-                      IconButton(
-                        onPressed: () {
-                          // Skip forward 1 second
-                          final maxDuration = _videoPlayerKey.currentState?.duration.inMilliseconds ?? 10000;
-                          final newPosition = Duration(
-                            milliseconds: (_currentVideoPosition.inMilliseconds + 1000).clamp(0, maxDuration.toDouble()).round()
-                          );
-                          safeSeekTo(newPosition);
-                        },
-                        icon: const Icon(Icons.forward_10, color: Colors.white),
-                        tooltip: 'Forward 1s',
-                      ),
-                      IconButton(
-                        onPressed: () {
-                          safeSeekTo(Duration.zero);
-                        },
-                        icon: const Icon(Icons.restart_alt, color: Colors.white),
-                        tooltip: 'Restart',
-                      ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          ),
-            ],
-          ),
-      // Loading overlay when analyzing
-      if (isAnalyzing || isUploading)
-        Container(
-          color: Colors.black54,
-          child: const Center(
-            child: Card(
-              margin: EdgeInsets.all(32),
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 16),
-                    Text(
-                      'Extracting and analyzing frames...',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                  ],
                 ),
               ),
             ),
-          ),
-        ),
         ],
       ),
     );

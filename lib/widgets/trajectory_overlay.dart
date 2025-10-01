@@ -64,15 +64,17 @@ class TrajectoryPainter extends CustomPainter {
 
       if (ballDetections.isNotEmpty) {
         final ball = ballDetections.first;
-        // Convert normalized coordinates (0-1) to video pixel coordinates
-        final videoX = ball.bbox.centerX * videoSize.width;
-        final videoY = ball.bbox.centerY * videoSize.height;
+        // Bounding box coordinates are already in pixel coordinates (not normalized)
+        final videoX = ball.bbox.centerX;
+        final videoY = ball.bbox.centerY;
 
-        trajectoryPoints.add(TrajectoryPoint(
-          position: Offset(videoX, videoY),
-          timestamp: frame.timestamp,
-          confidence: ball.confidence,
-        ));
+        trajectoryPoints.add(
+          TrajectoryPoint(
+            position: Offset(videoX, videoY),
+            timestamp: frame.timestamp,
+            confidence: ball.confidence,
+          ),
+        );
       }
     }
 
@@ -84,10 +86,14 @@ class TrajectoryPainter extends CustomPainter {
     if (cleanedPoints.length < 2) return;
 
     // Scale points to widget coordinates
-    final scaledPoints = cleanedPoints.map((tp) => Offset(
-      tp.position.dx * scale + offsetX,
-      tp.position.dy * scale + offsetY,
-    )).toList();
+    final scaledPoints = cleanedPoints
+        .map(
+          (tp) => Offset(
+            tp.position.dx * scale + offsetX,
+            tp.position.dy * scale + offsetY,
+          ),
+        )
+        .toList();
 
     // Draw trajectory path
     _drawTrajectoryPath(canvas, scaledPoints);
@@ -107,7 +113,14 @@ class TrajectoryPainter extends CustomPainter {
       _drawHoop(canvas, scaledHoop);
 
       // Draw prediction
-      _drawPrediction(canvas, cleanedPoints, hoopPosition, scale, offsetX, offsetY);
+      _drawPrediction(
+        canvas,
+        cleanedPoints,
+        hoopPosition,
+        scale,
+        offsetX,
+        offsetY,
+      );
     }
   }
 
@@ -168,11 +181,7 @@ class TrajectoryPainter extends CustomPainter {
     final shadowPaint = Paint()
       ..color = Colors.black.withValues(alpha: 0.3)
       ..style = PaintingStyle.fill;
-    canvas.drawCircle(
-      Offset(position.dx + 2, position.dy + 2),
-      8,
-      shadowPaint,
-    );
+    canvas.drawCircle(Offset(position.dx + 2, position.dy + 2), 8, shadowPaint);
 
     // Ball
     final ballPaint = Paint()
@@ -195,17 +204,19 @@ class TrajectoryPainter extends CustomPainter {
   Offset? _findHoopPosition() {
     for (final frame in frames) {
       final hoopDetections = frame.detections
-          .where((d) =>
-              d.label.toLowerCase().contains('hoop') ||
-              d.label.toLowerCase().contains('rim') ||
-              d.label.toLowerCase().contains('basket'))
+          .where(
+            (d) =>
+                d.label.toLowerCase().contains('hoop') ||
+                d.label.toLowerCase().contains('rim') ||
+                d.label.toLowerCase().contains('basket'),
+          )
           .toList();
 
       if (hoopDetections.isNotEmpty) {
         final hoop = hoopDetections.first;
-        // Convert normalized coordinates (0-1) to video pixel coordinates
-        final videoX = hoop.bbox.centerX * videoSize.width;
-        final videoY = hoop.bbox.centerY * videoSize.height;
+        // Bounding box coordinates are already in pixel coordinates (not normalized)
+        final videoX = hoop.bbox.centerX;
+        final videoY = hoop.bbox.centerY;
         return Offset(videoX, videoY);
       }
     }
@@ -229,8 +240,14 @@ class TrajectoryPainter extends CustomPainter {
   }
 
   /// Draw prediction trajectory
-  void _drawPrediction(Canvas canvas, List<TrajectoryPoint> points,
-                      Offset hoopPosition, double scale, double offsetX, double offsetY) {
+  void _drawPrediction(
+    Canvas canvas,
+    List<TrajectoryPoint> points,
+    Offset hoopPosition,
+    double scale,
+    double offsetX,
+    double offsetY,
+  ) {
     final ballPoints = points.map((tp) => tp.position).toList();
 
     final predictedPoints = TrajectoryPredictor.predictTrajectory(
@@ -242,10 +259,11 @@ class TrajectoryPainter extends CustomPainter {
     if (predictedPoints.isEmpty) return;
 
     // Scale predicted points
-    final scaledPredicted = predictedPoints.map((pos) => Offset(
-      pos.dx * scale + offsetX,
-      pos.dy * scale + offsetY,
-    )).toList();
+    final scaledPredicted = predictedPoints
+        .map(
+          (pos) => Offset(pos.dx * scale + offsetX, pos.dy * scale + offsetY),
+        )
+        .toList();
 
     // Check if shot will go in
     final willScore = TrajectoryPredictor.willShotGoIn(
@@ -284,7 +302,10 @@ class TrajectoryPainter extends CustomPainter {
 
         while (currentDistance < distance) {
           final segmentLength = drawDash ? dashLength : gapLength;
-          final segmentEnd = (currentDistance + segmentLength).clamp(0.0, distance);
+          final segmentEnd = (currentDistance + segmentLength).clamp(
+            0.0,
+            distance,
+          );
 
           if (drawDash) {
             final segmentStart = start + direction * currentDistance;
@@ -302,7 +323,7 @@ class TrajectoryPainter extends CustomPainter {
   @override
   bool shouldRepaint(TrajectoryPainter oldDelegate) {
     return currentVideoPosition != oldDelegate.currentVideoPosition ||
-           frames != oldDelegate.frames;
+        frames != oldDelegate.frames;
   }
 }
 
