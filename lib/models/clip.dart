@@ -6,6 +6,7 @@ class Clip {
   String video_path;
   VideoInfo? videoInfo;
   List<FrameData> frames;
+  List<Shot> shots; // Multiple shots detected in the video
 
   Clip({
     required this.id,
@@ -13,7 +14,8 @@ class Clip {
     required this.video_path,
     this.videoInfo,
     required this.frames,
-  });
+    List<Shot>? shots,
+  }) : shots = shots ?? [];
 
   factory Clip.fromJson(Map<String, dynamic> json) {
     return Clip(
@@ -132,7 +134,7 @@ class Detection {
       bbox: BoundingBox.fromList(bboxList),
       confidence: (json['confidence'] ?? 0).toDouble(),
       timestamp: (json['timestamp'] ?? 0).toDouble(),
-      label: (json['label'] ?? '')
+      label: (json['label'] ?? ''),
     );
   }
 
@@ -204,5 +206,38 @@ class Point {
       detection.bbox.height,
       detection.timestamp,
     );
+  }
+}
+
+// Shot class to represent a single basketball shot
+class Shot {
+  final int id;
+  final List<FrameData> frames;
+  final double startTime;
+  final double endTime;
+  String? prediction; // "MAKE" or "MISS"
+  Offset? hoopPosition;
+
+  Shot({
+    required this.id,
+    required this.frames,
+    required this.startTime,
+    required this.endTime,
+    this.prediction,
+    this.hoopPosition,
+  });
+
+  List<Offset> get ballTrajectory {
+    final points = <Offset>[];
+    for (final frame in frames) {
+      final ballDetections = frame.detections
+          .where((d) => d.label.toLowerCase().contains('ball'))
+          .toList();
+      if (ballDetections.isNotEmpty) {
+        final ball = ballDetections.first;
+        points.add(Offset(ball.bbox.centerX, ball.bbox.centerY));
+      }
+    }
+    return points;
   }
 }

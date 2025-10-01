@@ -51,7 +51,7 @@ class _ViewerPageState extends State<ViewerPage> {
   int framesProcessed = 0;
   int totalDetections = 0;
   int curFrame = 0;
-  String? shotPrediction; // "MAKE" or "MISS"
+  int currentShotIndex = 0; // Track which shot we're viewing
 
   // Video handled by CleanVideoPlayer
 
@@ -94,36 +94,46 @@ class _ViewerPageState extends State<ViewerPage> {
         return null;
       }
 
-      // Simple metadata estimation
-      debugPrint('📊 Using simple metadata estimation...');
+      // Get actual video metadata from the video player
+      debugPrint('📊 Getting video metadata from player...');
 
-      final file = File(widget.videoPath!);
-      final fileSize = await file.length();
+      // Wait for video player to be initialized
+      int retries = 0;
+      while (_videoPlayerKey.currentState == null && retries < 20) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        retries++;
+      }
 
-      // Estimate duration based on file size (rough but reliable)
-      final estimatedDuration = (fileSize / (1024 * 1024 * 2)).clamp(
-        5.0,
-        120.0,
-      ); // 2MB per second
+      final playerState = _videoPlayerKey.currentState;
+      final actualDuration =
+          playerState?.duration.inMilliseconds.toDouble() ?? 0;
+      final videoSize = playerState?.videoSize ?? const Size(1920, 1080);
+
+      // Use actual video duration if available, otherwise estimate
+      final videoDurationSeconds = actualDuration > 0
+          ? actualDuration / 1000.0
+          : (await File(widget.videoPath!).length() / (1024 * 1024 * 2)).clamp(
+              5.0,
+              120.0,
+            );
 
       final metadata = VideoMetadata(
         fps: 30.0, // Standard assumption
-        duration: estimatedDuration,
-        width: 1920, // HD default
-        height: 1080,
-        totalFrames: (30.0 * estimatedDuration).round(),
+        duration: videoDurationSeconds,
+        width: videoSize.width.toInt(),
+        height: videoSize.height.toInt(),
+        totalFrames: (30.0 * videoDurationSeconds).round(),
       );
 
       debugPrint(
-        '📊 Video metadata: ${metadata.width}x${metadata.height}, ${metadata.duration}s',
+        '📊 Video metadata: ${metadata.width}x${metadata.height}, ${metadata.duration}s (${actualDuration > 0 ? "ACTUAL" : "ESTIMATED"})',
       );
 
       // Calculate frame extraction parameters
       final videoDurationMs = (metadata.duration * 1000).round();
-      final videoDurationSeconds = metadata.duration;
       final targetFPS =
           15.0; // Extract 15 frames per second for smoother analysis
-      final totalFramesToExtract = (videoDurationSeconds * targetFPS).ceil();
+      final totalFramesToExtract = (metadata.duration * targetFPS).ceil();
       final frameIntervalMs = videoDurationMs / totalFramesToExtract;
 
       debugPrint(
@@ -264,29 +274,123 @@ class _ViewerPageState extends State<ViewerPage> {
     return _getCurrentFrameDetections(curFrame);
   }
 
-  void _calculateShotPrediction() {
+  void _segmentShots() {
     if (clip.frames.isEmpty) return;
 
-    // Extract ball trajectory points
-    final ballPoints = <Offset>[];
-    for (final frame in clip.frames) {
+    debugPrint('🏀 Starting shot segmentation...');
+
+    final shots = <Shot>[];
+    List<FrameData> currentShotFrames = [];
+    bool ballInMotion = false;
+    Offset? lastBallPosition;
+    int consecutiveNoBallFrames = 0;
+
+    // Find hoop position (assumed constant throughout video)
+    Offset? hoopPosition = _findHoopPosition();
+
+    for (int i = 0; i < clip.frames.length; i++) {
+      final frame = clip.frames[i];
       final ballDetections = frame.detections
           .where((d) => d.label.toLowerCase().contains('ball'))
           .toList();
 
       if (ballDetections.isNotEmpty) {
         final ball = ballDetections.first;
-        ballPoints.add(Offset(ball.bbox.centerX, ball.bbox.centerY));
+        final currentBallPos = Offset(ball.bbox.centerX, ball.bbox.centerY);
+
+        consecutiveNoBallFrames = 0;
+
+        // Check if ball is moving significantly
+        if (lastBallPosition != null) {
+          final distance = (currentBallPos - lastBallPosition).distance;
+
+          // Ball is in motion if it moved more than 20 pixels
+          if (distance > 20) {
+            if (!ballInMotion) {
+              // Start of new shot
+              debugPrint('🏀 Shot started at frame $i (${frame.timestamp}s)');
+              ballInMotion = true;
+              currentShotFrames = [frame];
+            } else {
+              currentShotFrames.add(frame);
+            }
+          } else if (ballInMotion) {
+            // Ball stopped moving - might be end of shot
+            currentShotFrames.add(frame);
+          }
+        }
+
+        lastBallPosition = currentBallPos;
+      } else {
+        // No ball detected
+        consecutiveNoBallFrames++;
+
+        // If ball was in motion and we haven't seen it for 5 frames, end the shot
+        if (ballInMotion && consecutiveNoBallFrames > 5) {
+          if (currentShotFrames.length >= 10) {
+            // Valid shot with enough frames
+            final shot = Shot(
+              id: shots.length,
+              frames: List.from(currentShotFrames),
+              startTime: currentShotFrames.first.timestamp,
+              endTime: currentShotFrames.last.timestamp,
+              hoopPosition: hoopPosition,
+            );
+
+            // Calculate prediction for this shot
+            if (hoopPosition != null && shot.ballTrajectory.length >= 3) {
+              final willMake = TrajectoryPredictor.willShotGoIn(
+                ballPoints: shot.ballTrajectory,
+                hoopPosition: hoopPosition,
+              );
+              shot.prediction = willMake ? "MAKE" : "MISS";
+            }
+
+            shots.add(shot);
+            debugPrint(
+              '✅ Shot ${shot.id} saved: ${currentShotFrames.length} frames (${shot.startTime.toStringAsFixed(2)}s - ${shot.endTime.toStringAsFixed(2)}s) - ${shot.prediction}',
+            );
+          }
+
+          currentShotFrames = [];
+          ballInMotion = false;
+        }
       }
     }
 
-    if (ballPoints.length < 3) {
-      debugPrint('⚠️ Not enough ball points for prediction');
-      return;
+    // Save last shot if it exists
+    if (currentShotFrames.length >= 10 && ballInMotion) {
+      final shot = Shot(
+        id: shots.length,
+        frames: List.from(currentShotFrames),
+        startTime: currentShotFrames.first.timestamp,
+        endTime: currentShotFrames.last.timestamp,
+        hoopPosition: hoopPosition,
+      );
+
+      if (hoopPosition != null && shot.ballTrajectory.length >= 3) {
+        final willMake = TrajectoryPredictor.willShotGoIn(
+          ballPoints: shot.ballTrajectory,
+          hoopPosition: hoopPosition,
+        );
+        shot.prediction = willMake ? "MAKE" : "MISS";
+      }
+
+      shots.add(shot);
+      debugPrint(
+        '✅ Shot ${shot.id} saved: ${currentShotFrames.length} frames (${shot.startTime.toStringAsFixed(2)}s - ${shot.endTime.toStringAsFixed(2)}s) - ${shot.prediction}',
+      );
     }
 
-    // Find hoop position
-    Offset? hoopPosition;
+    setState(() {
+      clip.shots = shots;
+      currentShotIndex = shots.isNotEmpty ? 0 : -1;
+    });
+
+    debugPrint('🏀 Shot segmentation complete: ${shots.length} shots detected');
+  }
+
+  Offset? _findHoopPosition() {
     for (final frame in clip.frames) {
       final hoopDetections = frame.detections
           .where(
@@ -299,25 +403,10 @@ class _ViewerPageState extends State<ViewerPage> {
 
       if (hoopDetections.isNotEmpty) {
         final hoop = hoopDetections.first;
-        hoopPosition = Offset(hoop.bbox.centerX, hoop.bbox.centerY);
-        break;
+        return Offset(hoop.bbox.centerX, hoop.bbox.centerY);
       }
     }
-
-    if (hoopPosition == null) {
-      debugPrint('⚠️ No hoop detected in video');
-      return;
-    }
-
-    // Calculate prediction
-    final willMake = TrajectoryPredictor.willShotGoIn(
-      ballPoints: ballPoints,
-      hoopPosition: hoopPosition,
-    );
-
-    setState(() {
-      shotPrediction = willMake ? "MAKE" : "MISS";
-    });
+    return null;
   }
 
   Timer? _seekDebounceTimer;
@@ -502,6 +591,19 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   Widget _buildVideoPlayerWithOverlay() {
+    // Determine which frames to show in overlay
+    List<FrameData> overlayFrames = [];
+
+    if (clip.shots.isNotEmpty &&
+        currentShotIndex >= 0 &&
+        currentShotIndex < clip.shots.length) {
+      // Show only current shot's trajectory
+      overlayFrames = clip.shots[currentShotIndex].frames;
+    } else if (clip.frames.isNotEmpty) {
+      // Fallback to all frames if no shots segmented
+      overlayFrames = clip.frames;
+    }
+
     return CleanVideoPlayer(
       key: _videoPlayerKey,
       videoPath: widget.videoPath!,
@@ -510,9 +612,9 @@ class _ViewerPageState extends State<ViewerPage> {
           _currentVideoPosition = position;
         });
       },
-      overlay: clip.frames.isNotEmpty
+      overlay: overlayFrames.isNotEmpty
           ? TrajectoryOverlay(
-              frames: clip.frames,
+              frames: overlayFrames,
               currentVideoPosition: _currentVideoPosition,
               videoSize:
                   _videoPlayerKey.currentState?.videoSize ??
@@ -566,9 +668,10 @@ class _ViewerPageState extends State<ViewerPage> {
                             setState(() {
                               isAnalyzing = true;
                               clip.frames.clear();
+                              clip.shots.clear();
                               totalDetections = 0;
                               framesProcessed = 0;
-                              shotPrediction = null;
+                              currentShotIndex = 0;
                             });
 
                             final subscription = analyzeVideoFrames().listen(
@@ -587,8 +690,8 @@ class _ViewerPageState extends State<ViewerPage> {
                                 if (mounted) {
                                   setState(() {
                                     isAnalyzing = false;
-                                    _calculateShotPrediction();
                                   });
+                                  _segmentShots();
                                 }
                               },
                               onError: (error) {
@@ -662,58 +765,173 @@ class _ViewerPageState extends State<ViewerPage> {
 
                     // Analysis complete - show results
                     if (!isAnalyzing && clip.frames.isNotEmpty) ...[
-                      // Shot prediction result
-                      if (shotPrediction != null)
+                      // Multi-shot navigation and prediction
+                      if (clip.shots.isNotEmpty) ...[
+                        // Shot selector with navigation
                         Container(
-                          padding: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.all(12),
                           margin: const EdgeInsets.only(bottom: 12),
                           decoration: BoxDecoration(
-                            color: shotPrediction == "MAKE"
-                                ? Colors.green.withOpacity(0.1)
-                                : Colors.red.withOpacity(0.1),
+                            color: Colors.grey[100],
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: shotPrediction == "MAKE"
-                                  ? Colors.green
-                                  : Colors.red,
-                              width: 2,
+                              color: Colors.grey[300]!,
+                              width: 1,
                             ),
                           ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                          child: Column(
                             children: [
-                              Icon(
-                                shotPrediction == "MAKE"
-                                    ? Icons.check_circle
-                                    : Icons.cancel,
-                                color: shotPrediction == "MAKE"
-                                    ? Colors.green
-                                    : Colors.red,
-                                size: 32,
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  IconButton(
+                                    onPressed: currentShotIndex > 0
+                                        ? () {
+                                            setState(() {
+                                              currentShotIndex--;
+                                              // Seek to shot start
+                                              safeSeekTo(
+                                                Duration(
+                                                  milliseconds:
+                                                      (clip
+                                                                  .shots[currentShotIndex]
+                                                                  .startTime *
+                                                              1000)
+                                                          .round(),
+                                                ),
+                                              );
+                                            });
+                                          }
+                                        : null,
+                                    icon: const Icon(Icons.arrow_back),
+                                    color: Colors.orange,
+                                    iconSize: 28,
+                                  ),
+                                  Column(
+                                    children: [
+                                      Text(
+                                        'Shot ${currentShotIndex + 1} of ${clip.shots.length}',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      Text(
+                                        '${clip.shots[currentShotIndex].startTime.toStringAsFixed(1)}s - ${clip.shots[currentShotIndex].endTime.toStringAsFixed(1)}s',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[600],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  IconButton(
+                                    onPressed:
+                                        currentShotIndex < clip.shots.length - 1
+                                        ? () {
+                                            setState(() {
+                                              currentShotIndex++;
+                                              // Seek to shot start
+                                              safeSeekTo(
+                                                Duration(
+                                                  milliseconds:
+                                                      (clip
+                                                                  .shots[currentShotIndex]
+                                                                  .startTime *
+                                                              1000)
+                                                          .round(),
+                                                ),
+                                              );
+                                            });
+                                          }
+                                        : null,
+                                    icon: const Icon(Icons.arrow_forward),
+                                    color: Colors.orange,
+                                    iconSize: 28,
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 12),
-                              Text(
-                                shotPrediction == "MAKE"
-                                    ? "SHOT WILL GO IN"
-                                    : "SHOT WILL MISS",
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: shotPrediction == "MAKE"
-                                      ? Colors.green
-                                      : Colors.red,
+                              const SizedBox(height: 8),
+                              // Current shot prediction
+                              if (clip.shots[currentShotIndex].prediction !=
+                                  null)
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        clip
+                                                .shots[currentShotIndex]
+                                                .prediction ==
+                                            "MAKE"
+                                        ? Colors.green.withOpacity(0.1)
+                                        : Colors.red.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color:
+                                          clip
+                                                  .shots[currentShotIndex]
+                                                  .prediction ==
+                                              "MAKE"
+                                          ? Colors.green
+                                          : Colors.red,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        clip
+                                                    .shots[currentShotIndex]
+                                                    .prediction ==
+                                                "MAKE"
+                                            ? Icons.check_circle
+                                            : Icons.cancel,
+                                        color:
+                                            clip
+                                                    .shots[currentShotIndex]
+                                                    .prediction ==
+                                                "MAKE"
+                                            ? Colors.green
+                                            : Colors.red,
+                                        size: 24,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        clip
+                                                    .shots[currentShotIndex]
+                                                    .prediction ==
+                                                "MAKE"
+                                            ? "WILL GO IN"
+                                            : "WILL MISS",
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                          color:
+                                              clip
+                                                      .shots[currentShotIndex]
+                                                      .prediction ==
+                                                  "MAKE"
+                                              ? Colors.green
+                                              : Colors.red,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
                             ],
                           ),
                         ),
+                      ],
                       ElevatedButton.icon(
                         onPressed: () {
                           setState(() {
                             clip.frames.clear();
+                            clip.shots.clear();
                             totalDetections = 0;
                             framesProcessed = 0;
-                            shotPrediction = null;
+                            currentShotIndex = 0;
                           });
                         },
                         icon: const Icon(Icons.refresh),
@@ -749,7 +967,16 @@ class _ViewerPageState extends State<ViewerPage> {
                           children: [
                             Slider(
                               value: _currentVideoPosition.inMilliseconds
-                                  .toDouble(),
+                                  .toDouble()
+                                  .clamp(
+                                    0.0,
+                                    (_videoPlayerKey
+                                                .currentState
+                                                ?.duration
+                                                .inMilliseconds ??
+                                            1000)
+                                        .toDouble(),
+                                  ),
                               max:
                                   (_videoPlayerKey
                                               .currentState
