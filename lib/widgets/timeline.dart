@@ -104,96 +104,121 @@ class _TimeLineState extends State<TimeLine> {
 
   @override
   Widget build(BuildContext context) {
+    final videoDuration = () {
+      try {
+        final controller = widget.videoController.videoPlayerController;
+        if (controller == null || controller.value.duration == Duration.zero) {
+          return 1.0;
+        }
+        return controller.value.duration!.inSeconds.toDouble();
+      } catch (e) {
+        return 1.0;
+      }
+    }();
+
     return Container(
-      height: 100,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            'Timeline (${widget.clip?.frames.fold(0, (sum, frame) => sum + frame.detections.length)} total detections)',
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: Container(
-              width: double.infinity,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey),
-                borderRadius: BorderRadius.circular(4),
+          // Time display
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                _formatTime(_sliderValue),
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
-              child: Stack(
-                children: [
-                  // Timeline background
-                  Container(
-                    height: double.infinity,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
+              Text(
+                'Detections: ${widget.clip?.frames.fold(0, (sum, frame) => sum + frame.detections.length) ?? 0}',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              Text(
+                _formatTime(videoDuration),
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ],
+          ),
 
-                  // Detection markers
-                  if (widget.clip?.frames != null)
-                    ...widget.clip!.frames
-                        .where((frame) => frame.detections.isNotEmpty)
-                        .map((frame) {
-                          final videoDuration =
-                              widget
-                                  .videoController
-                                  .videoPlayerController
-                                  ?.value
-                                  .duration
-                                  ?.inSeconds ??
-                              0;
-                          final position = videoDuration > 0
-                              ? (frame.timestamp / videoDuration) *
-                                    (MediaQuery.of(context).size.width -
-                                        32 -
-                                        16)
-                              : 0.0;
+          const SizedBox(height: 8),
 
-                          return Positioned(
-                            left: position,
-                            top: 0,
-                            bottom: 0,
-                            child: Container(
-                              width: 3,
-                              color: Colors.red.withOpacity(0.7),
-                              child: Tooltip(
-                                message:
-                                    '${frame.detections.length} detections at ${frame.timestamp.toStringAsFixed(1)}s',
-                                child: Container(),
-                              ),
-                            ),
-                          );
-                        }),
-                  // Improved slider with proper state management
-                  Slider(
-                    value: _sliderValue,
-                    min: 0.0,
-                    max: () {
-                      try {
-                        final controller =
-                            widget.videoController.videoPlayerController;
-                        if (controller == null ||
-                            controller.value.duration == Duration.zero) {
-                          return 1.0;
-                        }
-                        return controller.value.duration!.inSeconds.toDouble();
-                      } catch (e) {
-                        return 1.0;
-                      }
-                    }(),
-                    onChanged: _onSliderChanged,
-                    onChangeEnd: _onSliderChangeEnd,
-                    activeColor: Colors.blue,
-                    inactiveColor: Colors.grey[400],
-                  ),
-                ],
+          // Enhanced timeline slider
+          Container(
+            height: 40,
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 6,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
+                activeTrackColor: Colors.orange,
+                inactiveTrackColor: Colors.grey[300],
+                thumbColor: Colors.orange,
+                overlayColor: Colors.orange.withOpacity(0.2),
+              ),
+              child: Slider(
+                value: _sliderValue.clamp(0.0, videoDuration),
+                min: 0.0,
+                max: videoDuration,
+                onChanged: _onSliderChanged,
+                onChangeEnd: _onSliderChangeEnd,
               ),
             ),
           ),
+
+          const SizedBox(height: 4),
+
+          // Detection markers (simplified)
+          if (widget.clip?.frames != null && widget.clip!.frames.isNotEmpty)
+            Container(
+              height: 20,
+              width: double.infinity,
+              child: CustomPaint(
+                painter: DetectionMarkerPainter(
+                  frames: widget.clip!.frames,
+                  videoDuration: videoDuration,
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
+
+  String _formatTime(double seconds) {
+    final duration = Duration(seconds: seconds.round());
+    final minutes = duration.inMinutes;
+    final remainingSeconds = duration.inSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
+  }
+}
+
+class DetectionMarkerPainter extends CustomPainter {
+  final List<FrameData> frames;
+  final double videoDuration;
+
+  DetectionMarkerPainter({required this.frames, required this.videoDuration});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (videoDuration <= 0) return;
+
+    final paint = Paint()
+      ..color = Colors.orange.withOpacity(0.6)
+      ..style = PaintingStyle.fill;
+
+    for (final frame in frames) {
+      if (frame.detections.isNotEmpty) {
+        final position = (frame.timestamp / videoDuration) * size.width;
+        final height = (frame.detections.length / 5).clamp(0.2, 1.0) * size.height;
+
+        canvas.drawRect(
+          Rect.fromLTWH(position - 1, size.height - height, 2, height),
+          paint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

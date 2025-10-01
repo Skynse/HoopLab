@@ -3,14 +3,29 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
-import 'package:hooplab/utils/detection_painter.dart';
 import 'package:hooplab/utils/frame_cache.dart';
-import 'package:hooplab/widgets/timeline.dart';
-import 'package:better_player_plus/better_player_plus.dart';
+import 'package:hooplab/widgets/clean_video_player.dart';
+import 'package:hooplab/widgets/trajectory_overlay.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
 
 import 'package:path/path.dart' as p;
-import 'package:easy_video_editor/easy_video_editor.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
+
+class VideoMetadata {
+  final double fps;
+  final double duration;
+  final int width;
+  final int height;
+  final int totalFrames;
+
+  VideoMetadata({
+    required this.fps,
+    required this.duration,
+    required this.width,
+    required this.height,
+    required this.totalFrames,
+  });
+}
 
 class ViewerPage extends StatefulWidget {
   final String? videoPath;
@@ -25,8 +40,10 @@ class _ViewerPageState extends State<ViewerPage> {
   bool isUploading = false;
   String analysisStatus = '';
   late Clip clip;
-  late BetterPlayerController videoController;
-  late BetterPlayerDataSource betterPlayerDataSource;
+
+  // Clean video player
+  final GlobalKey<CleanVideoPlayerState> _videoPlayerKey = GlobalKey();
+  Duration _currentVideoPosition = Duration.zero;
   StreamSubscription? analysisSubscription;
   YOLO? yoloModel;
   int totalFramesToProcess = 0;
@@ -34,72 +51,23 @@ class _ViewerPageState extends State<ViewerPage> {
   int totalDetections = 0;
   int curFrame = 0;
 
-  // Video info properties
-  double? videoFramerate;
-  int? videoDurationMs;
-  int? videoWidth;
-  int? videoHeight;
+  // Video handled by CleanVideoPlayer
 
   // Performance optimization
   final FrameIndexCache _frameCache = FrameIndexCache();
-  final ValueNotifier<int> _currentFrameNotifier = ValueNotifier<int>(0);
-  bool _isVideoListenerActive = false;
-  GlobalKey _detectionOverlayKey = GlobalKey();
 
-  // Trajectory display controls
-  bool _showOptimalTrajectory = true;
-  bool _showBallPath = true;
-  bool _calculateInFrameReference =
-      false; // true = frame-of-reference, false = real-time
+  // Clean display - just show ball trajectory
   @override
   void initState() {
     super.initState();
     initializeYoloModel();
     initializeVideoPlayer();
     initializeClip();
-
-    _setupVideoListener();
   }
 
-  void _setupVideoListener() {
-    if (_isVideoListenerActive) return;
-    _isVideoListenerActive = true;
+  // Video listener handled by CleanVideoPlayer
 
-    videoController.addEventsListener((event) {
-      if (event.betterPlayerEventType == BetterPlayerEventType.progress) {
-        _onVideoPositionChanged();
-      }
-    });
-  }
-
-  void _onVideoPositionChanged() {
-    final videoPlayerController = videoController.videoPlayerController;
-    if (!mounted || videoPlayerController == null) return;
-
-    // Check if video player is properly initialized
-    try {
-      // Use duration as a proxy for initialization
-      if (videoPlayerController.value.duration == Duration.zero) return;
-    } catch (e) {
-      return; // Fallback if initialization check fails
-    }
-
-    if (clip.frames.isNotEmpty && _frameCache.isBuilt) {
-      final currentTimeSeconds =
-          videoPlayerController.value.position.inMilliseconds / 1000.0;
-
-      // Use efficient binary search from frame cache
-      int targetFrame = _frameCache.findClosestFrame(currentTimeSeconds);
-      targetFrame = targetFrame.clamp(0, clip.frames.length - 1);
-
-      // Only update if frame actually changed
-      if (curFrame != targetFrame) {
-        curFrame = targetFrame;
-        // Update via ValueNotifier instead of setState
-        _currentFrameNotifier.value = targetFrame;
-      }
-    }
-  }
+  // Video position tracking handled by CleanVideoPlayer callback
 
   void _rebuildFrameCache() {
     if (clip.frames.isNotEmpty) {
@@ -109,7 +77,7 @@ class _ViewerPageState extends State<ViewerPage> {
 
   Future<Map<String, dynamic>?> extractVideoFrames() async {
     try {
-      debugPrint('🎬 Starting local frame extraction...');
+      debugPrint('🎬 Starting local frame extraction with video_thumbnail...');
 
       if (mounted) {
         setState(() {
@@ -124,22 +92,36 @@ class _ViewerPageState extends State<ViewerPage> {
         return null;
       }
 
-      // Get video metadata first
-      final editor = VideoEditorBuilder(videoPath: widget.videoPath!);
-      final metadata = await editor.getVideoMetadata();
+      // Simple metadata estimation
+      debugPrint('📊 Using simple metadata estimation...');
+
+      final file = File(widget.videoPath!);
+      final fileSize = await file.length();
+
+      // Estimate duration based on file size (rough but reliable)
+      final estimatedDuration = (fileSize / (1024 * 1024 * 2)).clamp(5.0, 120.0); // 2MB per second
+
+      final metadata = VideoMetadata(
+        fps: 30.0, // Standard assumption
+        duration: estimatedDuration,
+        width: 1920, // HD default
+        height: 1080,
+        totalFrames: (30.0 * estimatedDuration).round(),
+      );
 
       debugPrint(
-        '📊 Video metadata: ${metadata.width}x${metadata.height}, ${metadata.duration}ms, ${metadata.rotation}°',
+        '📊 Video metadata: ${metadata.width}x${metadata.height}, ${metadata.duration}s',
       );
 
       // Calculate frame extraction parameters
-      final videoDurationSeconds = metadata.duration / 1000.0;
-      final targetFPS = 5.0; // Extract 5 frames per second for analysis
+      final videoDurationMs = (metadata.duration * 1000).round();
+      final videoDurationSeconds = metadata.duration;
+      final targetFPS = 15.0; // Extract 15 frames per second for smoother analysis
       final totalFramesToExtract = (videoDurationSeconds * targetFPS).ceil();
-      final frameInterval = metadata.duration / totalFramesToExtract;
+      final frameIntervalMs = videoDurationMs / totalFramesToExtract;
 
       debugPrint(
-        '🎯 Extracting $totalFramesToExtract frames at ${targetFPS}fps interval',
+        '🎯 Extracting $totalFramesToExtract frames at ${targetFPS}fps interval (${frameIntervalMs.toStringAsFixed(1)}ms apart)',
       );
 
       // Create temporary directory for frames
@@ -147,33 +129,39 @@ class _ViewerPageState extends State<ViewerPage> {
 
       List<Map<String, dynamic>> frameData = [];
 
-      // Extract frames at regular intervals
+      // Extract frames at regular intervals using video_thumbnail
       for (int i = 0; i < totalFramesToExtract; i++) {
-        final positionMs = (i * frameInterval).round();
+        final positionMs = (i * frameIntervalMs).round();
         final frameName = 'frame_${i.toString().padLeft(6, '0')}.jpg';
         final framePath = p.join(framesDir.path, frameName);
 
         try {
-          // Generate thumbnail at specific timestamp
-          final thumbnailPath = await editor.generateThumbnail(
-            positionMs: positionMs,
+          debugPrint('🎬 Extracting frame $i at ${positionMs}ms (${(positionMs / 1000.0).toStringAsFixed(2)}s)');
+
+          // Generate thumbnail at specific timestamp using video_thumbnail
+          final thumbnailPath = await VideoThumbnail.thumbnailFile(
+            video: widget.videoPath!,
+            thumbnailPath: framePath,
+            imageFormat: ImageFormat.JPEG,
+            timeMs: positionMs,
             quality: 85,
-            width: metadata.width,
-            height: metadata.height,
-            outputPath: framePath,
           );
 
           if (thumbnailPath != null && File(thumbnailPath).existsSync()) {
+            final frameFile = File(thumbnailPath);
+            final fileSize = frameFile.lengthSync();
+
             frameData.add({
               'frame_index': i,
               'extracted_index': i,
               'timestamp': positionMs / 1000.0,
               'filename': frameName,
               'path': thumbnailPath,
+              'file_size': fileSize,
             });
 
             debugPrint(
-              '✅ Extracted frame $i at ${(positionMs / 1000.0).toStringAsFixed(2)}s',
+              '✅ Extracted frame $i at ${(positionMs / 1000.0).toStringAsFixed(2)}s (${fileSize} bytes)',
             );
           } else {
             debugPrint(
@@ -199,12 +187,12 @@ class _ViewerPageState extends State<ViewerPage> {
 
       // Build metadata response similar to server format
       final responseMetadata = {
-        'fps': metadata.duration > 0
-            ? (totalFramesToExtract * 1000.0) / metadata.duration
+        'fps': videoDurationMs > 0
+            ? (totalFramesToExtract * 1000.0) / videoDurationMs
             : 30.0,
         'total_frames': totalFramesToExtract,
         'extracted_frames': extractedFramesCount,
-        'frame_interval': frameInterval,
+        'frame_interval': frameIntervalMs,
         'width': metadata.width,
         'height': metadata.height,
         'frames_directory': framesDir.path,
@@ -269,34 +257,18 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   Timer? _seekDebounceTimer;
-  // Safe video seeking with bounds checking
+  // Safe video seeking using CleanVideoPlayer
   Future<void> safeSeekTo(Duration position) async {
-    final videoPlayerController = videoController.videoPlayerController;
-    if (videoPlayerController == null) {
-      debugPrint('❌ Cannot seek: video controller not available');
-      return;
-    }
-
-    try {
-      if (!videoPlayerController.value.initialized) {
-        debugPrint('❌ Cannot seek: video not initialized');
-        return;
+    final playerState = _videoPlayerKey.currentState;
+    if (playerState != null) {
+      try {
+        await playerState.seekTo(position);
+        debugPrint('✅ Seeked to ${position.inSeconds}s');
+      } catch (e) {
+        debugPrint('❌ Seek error: $e');
       }
-    } catch (e) {
-      debugPrint('❌ Cannot seek: initialization check failed');
-      return;
-    }
-
-    final duration = videoPlayerController.value.duration;
-    final clampedPosition = Duration(
-      milliseconds: position.inMilliseconds.clamp(0, duration!.inMilliseconds),
-    );
-
-    try {
-      await videoController.seekTo(clampedPosition);
-      debugPrint('✅ Seeked to ${clampedPosition.inSeconds}s');
-    } catch (e) {
-      debugPrint('❌ Seek error: $e');
+    } else {
+      debugPrint('❌ Cannot seek: video player not available');
     }
   }
 
@@ -310,29 +282,7 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   void initializeVideoPlayer() {
-    betterPlayerDataSource = BetterPlayerDataSource(
-      BetterPlayerDataSourceType.file,
-      widget.videoPath!,
-    );
-
-    videoController = BetterPlayerController(
-      BetterPlayerConfiguration(
-        autoPlay: false,
-        looping: false,
-        controlsConfiguration: const BetterPlayerControlsConfiguration(
-          showControls: false,
-        ),
-      ),
-      betterPlayerDataSource: betterPlayerDataSource,
-    );
-
-    videoController.addEventsListener((event) {
-      if (event.betterPlayerEventType == BetterPlayerEventType.initialized) {
-        if (mounted) {
-          setState(() {});
-        }
-      }
-    });
+    // Video player initialization handled by CleanVideoPlayer widget
   }
 
   void initializeYoloModel() async {
@@ -356,15 +306,7 @@ class _ViewerPageState extends State<ViewerPage> {
   void dispose() {
     _seekDebounceTimer?.cancel();
     analysisSubscription?.cancel();
-
-    // Clean up performance optimization resources
-    _currentFrameNotifier.dispose();
     _frameCache.clear();
-
-    // BetterPlayerController handles listeners internally
-    _isVideoListenerActive = false;
-
-    videoController.dispose();
     super.dispose();
   }
 
@@ -373,15 +315,6 @@ class _ViewerPageState extends State<ViewerPage> {
       debugPrint('❌ YOLO model not loaded');
       return;
     }
-
-    final videoDuration =
-        videoDurationMs ??
-        (videoController
-                .videoPlayerController
-                ?.value
-                .duration!
-                .inMilliseconds ??
-            0);
 
     final Map<String, dynamic>? frameResponse = await extractVideoFrames();
 
@@ -408,16 +341,10 @@ class _ViewerPageState extends State<ViewerPage> {
     }
           */
 
-    videoWidth = frameResponse?['width'] as int?;
-    videoHeight = frameResponse?['height'] as int?;
-    videoFramerate = (frameResponse?['fps'] as double?);
-    videoDurationMs =
-        ((frameResponse?['total_frames'] as int?) ?? 0) *
-        (1000 / (videoFramerate ?? 30.0)).round();
+    // Video metadata handled by CleanVideoPlayer
 
     // Calculate frame interval based on desired analysis frequency
-    final analyzeEveryNthFrame = ((videoFramerate ?? 30.0) * 0.1)
-        .round(); // Analyze every 0.5 seconds
+    final analyzeEveryNthFrame = (30.0 * 0.1).round(); // Analyze every 0.5 seconds
     for (int idx = 0; idx < frameResponse!['extracted_frames']; idx += 1) {
       try {
         final frameNumber = idx;
@@ -510,430 +437,325 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   Widget _buildVideoPlayerWithOverlay() {
-    final videoPlayerController = videoController.videoPlayerController;
-    final aspectRatio = videoPlayerController?.value.aspectRatio;
-
-    // Use actual video dimensions when available, with proper fallback
-    final actualVideoWidth =
-        videoWidth?.toDouble() ??
-        (videoPlayerController?.value.size!.width ?? 1920.0);
-    final actualVideoHeight =
-        videoHeight?.toDouble() ??
-        (videoPlayerController?.value.size!.height ?? 1080.0);
-
-    return AspectRatio(
-      aspectRatio: aspectRatio!,
-      child: Stack(
-        children: [
-          // Video player with its own repaint boundary
-          RepaintBoundary(child: BetterPlayer(controller: videoController)),
-
-          // Detection overlay with separate repaint boundary and ValueNotifier
-          Positioned.fill(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return IgnorePointer(
-                  child: RepaintBoundary(
-                    key: _detectionOverlayKey,
-                    child: ValueListenableBuilder<int>(
-                      valueListenable: _currentFrameNotifier,
-                      builder: (context, currentFrame, child) {
-                        return CustomPaint(
-                          painter: DetectionPainter(
-                            detections: _getCurrentFrameDetections(
-                              currentFrame,
-                            ),
-                            videoSize: Size(
-                              actualVideoWidth,
-                              actualVideoHeight,
-                            ),
-                            widgetSize: Size(
-                              constraints.maxWidth,
-                              constraints.maxHeight,
-                            ),
-                            aspectRatio: aspectRatio,
-                            allFrames: clip.frames,
-                            currentFrame: currentFrame,
-                            showTrajectories: _showBallPath,
-                            showEstimatedPath: _showOptimalTrajectory,
-                            calculateInFrameReference:
-                                _calculateInFrameReference,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
+    return CleanVideoPlayer(
+      key: _videoPlayerKey,
+      videoPath: widget.videoPath!,
+      onPositionChanged: (position) {
+        setState(() {
+          _currentVideoPosition = position;
+        });
+      },
+      overlay: clip.frames.isNotEmpty
+          ? TrajectoryOverlay(
+              frames: clip.frames,
+              currentVideoPosition: _currentVideoPosition,
+              videoSize: _videoPlayerKey.currentState?.videoSize ?? const Size(1920, 1080),
+            )
+          : null,
     );
   }
 
-  Widget _buildTrajectoryControlDrawer() {
-    return Drawer(
-      child: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          const DrawerHeader(
-            decoration: BoxDecoration(color: Colors.blue),
-            child: Text(
-              'Trajectory Controls',
-              style: TextStyle(color: Colors.white, fontSize: 24),
-            ),
-          ),
-
-          // Ball Path Toggle
-          ListTile(
-            leading: Icon(
-              _showBallPath ? Icons.visibility : Icons.visibility_off,
-              color: _showBallPath ? Colors.green : Colors.grey,
-            ),
-            title: const Text('Show Ball Path'),
-            subtitle: const Text('Display real-time ball trajectory'),
-            trailing: Switch(
-              value: _showBallPath,
-              onChanged: (value) {
-                setState(() {
-                  _showBallPath = value;
-                });
-              },
-            ),
-          ),
-
-          const Divider(),
-
-          // Optimal Trajectory Toggle
-          ListTile(
-            leading: Icon(
-              _showOptimalTrajectory ? Icons.timeline : Icons.timeline_outlined,
-              color: _showOptimalTrajectory ? Colors.orange : Colors.grey,
-            ),
-            title: const Text('Show Optimal Trajectory'),
-            subtitle: const Text('Display predicted optimal shot path'),
-            trailing: Switch(
-              value: _showOptimalTrajectory,
-              onChanged: (value) {
-                setState(() {
-                  _showOptimalTrajectory = value;
-                });
-              },
-            ),
-          ),
-
-          const Divider(),
-
-          // Calculation Mode
-          ListTile(
-            leading: Icon(
-              _calculateInFrameReference ? Icons.camera_alt : Icons.speed,
-              color: _calculateInFrameReference ? Colors.purple : Colors.blue,
-            ),
-            title: const Text('Calculation Mode'),
-            subtitle: Text(
-              _calculateInFrameReference
-                  ? 'Frame-of-reference calculation'
-                  : 'Real-time calculation',
-            ),
-            trailing: Switch(
-              value: _calculateInFrameReference,
-              onChanged: (value) {
-                setState(() {
-                  _calculateInFrameReference = value;
-                });
-              },
-            ),
-          ),
-
-          const Divider(),
-
-          // Info section
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Calculation Modes:',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                SizedBox(height: 8),
-                Text(
-                  '• Real-time: Calculations update as video plays\n'
-                  '• Frame-of-reference: Calculations based on current frame position',
-                  style: TextStyle(fontSize: 14),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
-    final videoPlayerController = videoController.videoPlayerController;
 
-    if (videoPlayerController == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-
-    try {
-      if (!videoPlayerController.value.initialized) {
-        return const Scaffold(body: Center(child: CircularProgressIndicator()));
-      }
-    } catch (e) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-
-    return SafeArea(
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text("Video Analysis"),
-          backgroundColor: Colors.blue,
-          actions: [
-            Builder(
-              builder: (context) => IconButton(
-                icon: const Icon(Icons.settings),
-                onPressed: () => Scaffold.of(context).openEndDrawer(),
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text("Shot Analysis"),
+        backgroundColor: Colors.orange,
+        elevation: 0,
+        actions: [],
+      ),
+      body: Stack(
+        children: [
+          Column(
+            children: [
+          // Video player section (takes most of the screen)
+          Expanded(
+            flex: 4,
+            child: Container(
+              margin: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black26,
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: _buildVideoPlayerWithOverlay(),
               ),
             ),
-          ],
-        ),
-        endDrawer: _buildTrajectoryControlDrawer(),
-        body: Stack(
-          children: [
-            // Main content
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                children: [
-                  // Video player with detection overlay
-                  Flexible(flex: 3, child: _buildVideoPlayerWithOverlay()),
+          ),
 
-                  const SizedBox(height: 20),
+          // Control panel
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Analysis button
+                if (!isAnalyzing && clip.frames.isEmpty)
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        setState(() {
+                          isAnalyzing = true;
+                          clip.frames.clear();
+                          totalDetections = 0;
+                          framesProcessed = 0;
+                        });
 
-                  // Control buttons
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          final videoPlayerController =
-                              videoController.videoPlayerController;
-                          if (videoPlayerController == null) return;
-
-                          try {
-                            if (!videoPlayerController.value.initialized)
-                              return;
-                          } catch (e) {
-                            return;
-                          }
-
-                          try {
-                            if (videoPlayerController.value.position >=
-                                videoPlayerController.value.duration!) {
-                              // Video has ended - seek to beginning AND play
-                              await videoController.seekTo(Duration.zero);
-                              await videoController.play();
-                            } else {
-                              // Normal play/pause toggle
-                              if (videoPlayerController.value.isPlaying) {
-                                await videoController.pause();
-                              } else {
-                                await videoController.play();
-                              }
+                        final subscription = analyzeVideoFrames().listen(
+                          (frameData) {
+                            if (mounted) {
+                              setState(() {
+                                clip.frames.add(frameData);
+                                _frameCache.buildCache(clip.frames);
+                                framesProcessed++;
+                                totalDetections += frameData.detections.length;
+                              });
                             }
-                          } catch (e) {
-                            debugPrint('❌ Play/Pause error: $e');
-                          }
-                        },
-                        icon: Icon(
-                          (videoController
-                                      .videoPlayerController
-                                      ?.value
-                                      .isPlaying ??
-                                  false)
-                              ? Icons.pause
-                              : Icons.play_arrow,
-                        ),
-                        label: Text(
-                          (videoController
-                                      .videoPlayerController
-                                      ?.value
-                                      .isPlaying ??
-                                  false)
-                              ? "Pause"
-                              : "Play",
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blue,
+                          },
+                          onDone: () {
+                            if (mounted) {
+                              setState(() {
+                                isAnalyzing = false;
+                              });
+                            }
+                          },
+                          onError: (error) {
+                            debugPrint('❌ Analysis error: $error');
+                            if (mounted) {
+                              setState(() {
+                                isAnalyzing = false;
+                              });
+                            }
+                          },
+                        );
+                        analysisSubscription = subscription;
+                      },
+                      icon: const Icon(Icons.analytics),
+                      label: const Text("Analyze Shot"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+
+                // Analysis in progress
+                if (isAnalyzing) ...[
+                  Row(
+                    children: [
+                      const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Analyzing frames...',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey[800],
+                              ),
+                            ),
+                            Text(
+                              '$framesProcessed frames • $totalDetections detections',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      ElevatedButton.icon(
+                      TextButton(
                         onPressed: () {
-                          if (isAnalyzing) {
-                            analysisSubscription?.cancel();
-                            setState(() {
-                              isAnalyzing = false;
-                            });
-                          } else {
-                            setState(() {
-                              isAnalyzing = true;
-                              clip.frames.clear();
-                              totalDetections = 0;
-                              framesProcessed = 0;
-                            });
-
-                            analysisSubscription = analyzeVideoFrames().listen(
-                              (frameData) {
-                                if (mounted) {
-                                  setState(() {
-                                    clip.frames.add(frameData);
-                                    // Rebuild frame cache for efficient lookup
-                                    _rebuildFrameCache();
-                                  });
-                                }
-                              },
-
-                              onDone: () {
-                                if (mounted) {
-                                  setState(() {
-                                    isAnalyzing = false;
-                                    // Final frame cache rebuild
-                                    _rebuildFrameCache();
-                                  });
-                                }
-                              },
-                            );
-                          }
+                          analysisSubscription?.cancel();
+                          setState(() {
+                            isAnalyzing = false;
+                          });
                         },
-                        icon: Icon(isAnalyzing ? Icons.stop : Icons.analytics),
-                        label: Text(
-                          isAnalyzing ? "Stop Analysis" : "Start Analysis",
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: isAnalyzing
-                              ? Colors.red
-                              : Colors.green,
-                        ),
+                        child: const Text("Stop"),
                       ),
                     ],
                   ),
-
-                  const SizedBox(height: 20),
-
-                  // Progress and stats
-                  if (isAnalyzing && totalFramesToProcess > 0) ...[
-                    LinearProgressIndicator(
-                      value: framesProcessed / totalFramesToProcess,
-                      backgroundColor: Colors.grey[300],
-                      valueColor: const AlwaysStoppedAnimation<Color>(
-                        Colors.blue,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Progress: $framesProcessed / $totalFramesToProcess frames',
-                    ),
-                    Text('Detections found: $totalDetections'),
-                    const SizedBox(height: 20),
-                  ],
-                  TimeLine(clip: clip, videoController: videoController),
-                  const SizedBox(height: 20),
                 ],
-              ),
-            ),
 
-            // Analysis overlay
-            if (isAnalyzing || isUploading)
-              Container(
-                color: Colors.black.withOpacity(0.7),
-                child: Center(
-                  child: Card(
-                    margin: const EdgeInsets.all(32.0),
-                    child: Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const CircularProgressIndicator(),
-                          const SizedBox(height: 16),
-                          Text(
-                            isUploading
-                                ? 'Extracting Frames...'
-                                : 'Analyzing Video...',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          if (isUploading && analysisStatus.isNotEmpty) ...[
-                            Text(
-                              analysisStatus,
-                              style: const TextStyle(fontSize: 14),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 12),
-                          ],
-                          if (!isUploading) ...[
-                            Text(
-                              'Processing: $framesProcessed/$totalFramesToProcess frames',
-                            ),
-                            Text('Detections found: $totalDetections'),
-                            if (videoFramerate != null)
-                              Text(
-                                'Framerate: ${videoFramerate!.toStringAsFixed(1)} fps',
-                              ),
-                            if (totalFramesToProcess > 0) ...[
-                              const SizedBox(height: 8),
-                              LinearProgressIndicator(
-                                value: framesProcessed / totalFramesToProcess,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                '${((framesProcessed / totalFramesToProcess) * 100).toStringAsFixed(1)}% Complete',
-                              ),
-                            ],
-                          ],
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: () {
-                              analysisSubscription?.cancel();
-                              setState(() {
-                                isAnalyzing = false;
-                                isUploading = false;
-                                analysisStatus = '';
-                              });
-                            },
-                            child: const Text('Cancel'),
-                          ),
-                        ],
-                      ),
+                // Analysis complete - show results
+                if (!isAnalyzing && clip.frames.isNotEmpty) ...[
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        clip.frames.clear();
+                        totalDetections = 0;
+                        framesProcessed = 0;
+                      });
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text("Re-analyze"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.grey[600],
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${clip.frames.length} frames analyzed • $totalDetections detections found',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+
+                const SizedBox(height: 12),
+
+                // Video position and controls
+                if (clip.frames.isNotEmpty) ...[
+                  Text(
+                    'Video position: ${_currentVideoPosition.inSeconds}s',
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Video seek slider
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Column(
+                      children: [
+                        Slider(
+                          value: _currentVideoPosition.inMilliseconds.toDouble(),
+                          max: (_videoPlayerKey.currentState?.duration.inMilliseconds ?? 1000).toDouble(),
+                          onChanged: (value) {
+                            final newPosition = Duration(milliseconds: value.round());
+                            safeSeekTo(newPosition);
+                          },
+                          activeColor: Colors.orange,
+                          inactiveColor: Colors.grey,
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              '${_currentVideoPosition.inSeconds}s',
+                              style: const TextStyle(color: Colors.grey, fontSize: 12),
+                            ),
+                            Text(
+                              '${(_videoPlayerKey.currentState?.duration.inSeconds ?? 0)}s',
+                              style: const TextStyle(color: Colors.grey, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        onPressed: () {
+                          // Skip back 1 second
+                          final newPosition = Duration(
+                            milliseconds: (_currentVideoPosition.inMilliseconds - 1000).clamp(0, double.infinity).round()
+                          );
+                          safeSeekTo(newPosition);
+                        },
+                        icon: const Icon(Icons.replay_10, color: Colors.white),
+                        tooltip: 'Back 1s',
+                      ),
+                      IconButton(
+                        onPressed: () {
+                          final playerState = _videoPlayerKey.currentState;
+                          playerState?.pause();
+                        },
+                        icon: const Icon(Icons.pause, color: Colors.white),
+                      ),
+                      IconButton(
+                        onPressed: () {
+                          final playerState = _videoPlayerKey.currentState;
+                          playerState?.play();
+                        },
+                        icon: const Icon(Icons.play_arrow, color: Colors.white),
+                      ),
+                      IconButton(
+                        onPressed: () {
+                          // Skip forward 1 second
+                          final maxDuration = _videoPlayerKey.currentState?.duration.inMilliseconds ?? 10000;
+                          final newPosition = Duration(
+                            milliseconds: (_currentVideoPosition.inMilliseconds + 1000).clamp(0, maxDuration.toDouble()).round()
+                          );
+                          safeSeekTo(newPosition);
+                        },
+                        icon: const Icon(Icons.forward_10, color: Colors.white),
+                        tooltip: 'Forward 1s',
+                      ),
+                      IconButton(
+                        onPressed: () {
+                          safeSeekTo(Duration.zero);
+                        },
+                        icon: const Icon(Icons.restart_alt, color: Colors.white),
+                        tooltip: 'Restart',
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+            ],
+          ),
+      // Loading overlay when analyzing
+      if (isAnalyzing || isUploading)
+        Container(
+          color: Colors.black54,
+          child: const Center(
+            child: Card(
+              margin: EdgeInsets.all(32),
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text(
+                      'Extracting and analyzing frames...',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ],
                 ),
               ),
-          ],
+            ),
+          ),
         ),
+        ],
       ),
     );
-  }
-
-  Color _getConfidenceColor(double confidence) {
-    if (confidence >= 0.8) return Colors.green;
-    if (confidence >= 0.6) return Colors.orange;
-    return Colors.red;
-  }
-
-  String _formatDuration(Duration duration) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    String twoDigitMinutes = twoDigits(duration.inMinutes.remainder(60));
-    String twoDigitSeconds = twoDigits(duration.inSeconds.remainder(60));
-    return "${twoDigits(duration.inHours)}:$twoDigitMinutes:$twoDigitSeconds";
   }
 }
