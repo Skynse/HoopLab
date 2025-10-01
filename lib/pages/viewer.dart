@@ -6,6 +6,7 @@ import 'package:hooplab/models/clip.dart';
 import 'package:hooplab/utils/frame_cache.dart';
 import 'package:hooplab/widgets/clean_video_player.dart';
 import 'package:hooplab/widgets/trajectory_overlay.dart';
+import 'package:hooplab/utils/trajectory_prediction.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
 
 import 'package:path/path.dart' as p;
@@ -50,6 +51,7 @@ class _ViewerPageState extends State<ViewerPage> {
   int framesProcessed = 0;
   int totalDetections = 0;
   int curFrame = 0;
+  String? shotPrediction; // "MAKE" or "MISS"
 
   // Video handled by CleanVideoPlayer
 
@@ -260,6 +262,62 @@ class _ViewerPageState extends State<ViewerPage> {
   // Keep the old method for compatibility
   List<Detection> getCurrentFrameDetections() {
     return _getCurrentFrameDetections(curFrame);
+  }
+
+  void _calculateShotPrediction() {
+    if (clip.frames.isEmpty) return;
+
+    // Extract ball trajectory points
+    final ballPoints = <Offset>[];
+    for (final frame in clip.frames) {
+      final ballDetections = frame.detections
+          .where((d) => d.label.toLowerCase().contains('ball'))
+          .toList();
+
+      if (ballDetections.isNotEmpty) {
+        final ball = ballDetections.first;
+        ballPoints.add(Offset(ball.bbox.centerX, ball.bbox.centerY));
+      }
+    }
+
+    if (ballPoints.length < 3) {
+      debugPrint('⚠️ Not enough ball points for prediction');
+      return;
+    }
+
+    // Find hoop position
+    Offset? hoopPosition;
+    for (final frame in clip.frames) {
+      final hoopDetections = frame.detections
+          .where(
+            (d) =>
+                d.label.toLowerCase().contains('hoop') ||
+                d.label.toLowerCase().contains('rim') ||
+                d.label.toLowerCase().contains('basket'),
+          )
+          .toList();
+
+      if (hoopDetections.isNotEmpty) {
+        final hoop = hoopDetections.first;
+        hoopPosition = Offset(hoop.bbox.centerX, hoop.bbox.centerY);
+        break;
+      }
+    }
+
+    if (hoopPosition == null) {
+      debugPrint('⚠️ No hoop detected in video');
+      return;
+    }
+
+    // Calculate prediction
+    final willMake = TrajectoryPredictor.willShotGoIn(
+      ballPoints: ballPoints,
+      hoopPosition: hoopPosition,
+    );
+
+    setState(() {
+      shotPrediction = willMake ? "MAKE" : "MISS";
+    });
   }
 
   Timer? _seekDebounceTimer;
@@ -510,6 +568,7 @@ class _ViewerPageState extends State<ViewerPage> {
                               clip.frames.clear();
                               totalDetections = 0;
                               framesProcessed = 0;
+                              shotPrediction = null;
                             });
 
                             final subscription = analyzeVideoFrames().listen(
@@ -528,6 +587,7 @@ class _ViewerPageState extends State<ViewerPage> {
                                 if (mounted) {
                                   setState(() {
                                     isAnalyzing = false;
+                                    _calculateShotPrediction();
                                   });
                                 }
                               },
@@ -602,12 +662,58 @@ class _ViewerPageState extends State<ViewerPage> {
 
                     // Analysis complete - show results
                     if (!isAnalyzing && clip.frames.isNotEmpty) ...[
+                      // Shot prediction result
+                      if (shotPrediction != null)
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: shotPrediction == "MAKE"
+                                ? Colors.green.withOpacity(0.1)
+                                : Colors.red.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: shotPrediction == "MAKE"
+                                  ? Colors.green
+                                  : Colors.red,
+                              width: 2,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                shotPrediction == "MAKE"
+                                    ? Icons.check_circle
+                                    : Icons.cancel,
+                                color: shotPrediction == "MAKE"
+                                    ? Colors.green
+                                    : Colors.red,
+                                size: 32,
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                shotPrediction == "MAKE"
+                                    ? "SHOT WILL GO IN"
+                                    : "SHOT WILL MISS",
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: shotPrediction == "MAKE"
+                                      ? Colors.green
+                                      : Colors.red,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ElevatedButton.icon(
                         onPressed: () {
                           setState(() {
                             clip.frames.clear();
                             totalDetections = 0;
                             framesProcessed = 0;
+                            shotPrediction = null;
                           });
                         },
                         icon: const Icon(Icons.refresh),
