@@ -277,16 +277,26 @@ class _ViewerPageState extends State<ViewerPage> {
   void _segmentShots() {
     if (clip.frames.isEmpty) return;
 
-    debugPrint('🏀 Starting shot segmentation...');
+    debugPrint('🏀 Starting shot segmentation with up/down regions...');
 
     final shots = <Shot>[];
     List<FrameData> currentShotFrames = [];
-    bool ballInMotion = false;
-    Offset? lastBallPosition;
+    List<Offset> currentShotBallPositions = [];
+
+    bool inUpRegion = false;
+    bool inDownRegion = false;
+    int upFrameIndex = 0;
+    int downFrameIndex = 0;
+
     int consecutiveNoBallFrames = 0;
 
-    // Find hoop position (assumed constant throughout video)
+    // Find hoop position
     Offset? hoopPosition = _findHoopPosition();
+
+    if (hoopPosition == null) {
+      debugPrint('❌ No hoop detected, cannot segment shots');
+      return;
+    }
 
     for (int i = 0; i < clip.frames.length; i++) {
       final frame = clip.frames[i];
@@ -296,39 +306,36 @@ class _ViewerPageState extends State<ViewerPage> {
 
       if (ballDetections.isNotEmpty) {
         final ball = ballDetections.first;
-        final currentBallPos = Offset(ball.bbox.centerX, ball.bbox.centerY);
+        final ballPos = Offset(ball.bbox.centerX, ball.bbox.centerY);
 
         consecutiveNoBallFrames = 0;
+        currentShotBallPositions.add(ballPos);
 
-        // Check if ball is moving significantly
-        if (lastBallPosition != null) {
-          final distance = (currentBallPos - lastBallPosition).distance;
-
-          // Ball is in motion if it moved more than 20 pixels
-          if (distance > 20) {
-            if (!ballInMotion) {
-              // Start of new shot
-              debugPrint('🏀 Shot started at frame $i (${frame.timestamp}s)');
-              ballInMotion = true;
-              currentShotFrames = [frame];
-            } else {
-              currentShotFrames.add(frame);
-            }
-          } else if (ballInMotion) {
-            // Ball stopped moving - might be end of shot
-            currentShotFrames.add(frame);
-          }
+        // Check if ball enters "UP" region (around backboard, above hoop)
+        if (!inUpRegion && _isInUpRegion(ballPos, hoopPosition, ball.bbox)) {
+          inUpRegion = true;
+          upFrameIndex = i;
+          currentShotFrames = [frame];
+          debugPrint('🏀 Ball in UP region at frame $i (${frame.timestamp}s)');
         }
 
-        lastBallPosition = currentBallPos;
-      } else {
-        // No ball detected
-        consecutiveNoBallFrames++;
+        // If already in up region, keep adding frames
+        if (inUpRegion && !inDownRegion) {
+          currentShotFrames.add(frame);
+        }
 
-        // If ball was in motion and we haven't seen it for 5 frames, end the shot
-        if (ballInMotion && consecutiveNoBallFrames > 5) {
+        // Check if ball enters "DOWN" region (below the net)
+        if (inUpRegion &&
+            !inDownRegion &&
+            _isInDownRegion(ballPos, hoopPosition, ball.bbox)) {
+          inDownRegion = true;
+          downFrameIndex = i;
+          debugPrint('🏀 Ball in DOWN region at frame $i (${frame.timestamp}s)');
+        }
+
+        // Shot complete: went from UP → DOWN
+        if (inUpRegion && inDownRegion && upFrameIndex < downFrameIndex) {
           if (currentShotFrames.length >= 10) {
-            // Valid shot with enough frames
             final shot = Shot(
               id: shots.length,
               frames: List.from(currentShotFrames),
@@ -337,10 +344,11 @@ class _ViewerPageState extends State<ViewerPage> {
               hoopPosition: hoopPosition,
             );
 
-            // Calculate prediction for this shot
-            if (hoopPosition != null && shot.ballTrajectory.length >= 3) {
+            // Calculate prediction
+            final ballTrajectory = currentShotBallPositions;
+            if (ballTrajectory.length >= 3) {
               final willMake = TrajectoryPredictor.willShotGoIn(
-                ballPoints: shot.ballTrajectory,
+                ballPoints: ballTrajectory,
                 hoopPosition: hoopPosition,
               );
               shot.prediction = willMake ? "MAKE" : "MISS";
@@ -348,38 +356,28 @@ class _ViewerPageState extends State<ViewerPage> {
 
             shots.add(shot);
             debugPrint(
-              '✅ Shot ${shot.id} saved: ${currentShotFrames.length} frames (${shot.startTime.toStringAsFixed(2)}s - ${shot.endTime.toStringAsFixed(2)}s) - ${shot.prediction}',
+              '✅ Shot ${shot.id} completed: ${shot.prediction} '
+              '(${currentShotFrames.length} frames)',
             );
           }
 
+          // Reset for next shot
+          inUpRegion = false;
+          inDownRegion = false;
           currentShotFrames = [];
-          ballInMotion = false;
+          currentShotBallPositions = [];
+        }
+      } else {
+        consecutiveNoBallFrames++;
+
+        // Reset if no ball detected for too long
+        if (consecutiveNoBallFrames > 15) {
+          inUpRegion = false;
+          inDownRegion = false;
+          currentShotFrames = [];
+          currentShotBallPositions = [];
         }
       }
-    }
-
-    // Save last shot if it exists
-    if (currentShotFrames.length >= 10 && ballInMotion) {
-      final shot = Shot(
-        id: shots.length,
-        frames: List.from(currentShotFrames),
-        startTime: currentShotFrames.first.timestamp,
-        endTime: currentShotFrames.last.timestamp,
-        hoopPosition: hoopPosition,
-      );
-
-      if (hoopPosition != null && shot.ballTrajectory.length >= 3) {
-        final willMake = TrajectoryPredictor.willShotGoIn(
-          ballPoints: shot.ballTrajectory,
-          hoopPosition: hoopPosition,
-        );
-        shot.prediction = willMake ? "MAKE" : "MISS";
-      }
-
-      shots.add(shot);
-      debugPrint(
-        '✅ Shot ${shot.id} saved: ${currentShotFrames.length} frames (${shot.startTime.toStringAsFixed(2)}s - ${shot.endTime.toStringAsFixed(2)}s) - ${shot.prediction}',
-      );
     }
 
     setState(() {
@@ -388,6 +386,35 @@ class _ViewerPageState extends State<ViewerPage> {
     });
 
     debugPrint('🏀 Shot segmentation complete: ${shots.length} shots detected');
+  }
+
+  /// Check if ball is in the "UP" region (around backboard, above hoop)
+  bool _isInUpRegion(Offset ballPos, Offset hoopPos, BoundingBox ballBox) {
+    // Define UP region boundaries based on reference implementation
+    // X: 4x hoop width on each side
+    // Y: 2x hoop height above, to 0.5x below hoop center
+
+    final hoopWidth = 60.0; // Approximate hoop width in pixels
+    final hoopHeight = 30.0; // Approximate hoop height in pixels
+
+    final x1 = hoopPos.dx - (4 * hoopWidth);
+    final x2 = hoopPos.dx + (4 * hoopWidth);
+    final y1 = hoopPos.dy - (2 * hoopHeight);
+    final y2 = hoopPos.dy - (0.5 * hoopHeight);
+
+    return ballPos.dx > x1 &&
+        ballPos.dx < x2 &&
+        ballPos.dy > y1 &&
+        ballPos.dy < y2;
+  }
+
+  /// Check if ball is in the "DOWN" region (below the net)
+  bool _isInDownRegion(Offset ballPos, Offset hoopPos, BoundingBox ballBox) {
+    // Define DOWN region: below the bottom of the hoop
+    final hoopHeight = 30.0;
+    final downThreshold = hoopPos.dy + (0.5 * hoopHeight);
+
+    return ballPos.dy > downThreshold;
   }
 
   Offset? _findHoopPosition() {

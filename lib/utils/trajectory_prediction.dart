@@ -46,34 +46,61 @@ class TrajectoryPredictor {
   }
 
   /// Check if predicted trajectory intersects with hoop (shot success detection)
+  /// Check if shot will go in using rim-crossing detection
+  /// Uses linear interpolation between last point above rim and first point below rim
   static bool willShotGoIn({
     required List<Offset> ballPoints,
     required Offset hoopPosition,
-    double hoopRadius = 30.0, // pixels
+    double hoopRadius = 30.0,
   }) {
-    final predictedPath = predictTrajectory(
-      ballPoints: ballPoints,
-      hoopPosition: hoopPosition,
-      predictionSteps: 30,
-    );
+    if (ballPoints.length < 3) return false;
 
-    if (predictedPath.isEmpty) return false;
+    // Calculate rim height (top of hoop)
+    final rimHeight = hoopPosition.dy - (hoopRadius * 0.5);
 
-    // Check if any predicted point is within hoop radius
-    for (final point in predictedPath) {
-      final distance = (point - hoopPosition).distance;
-      if (distance <= hoopRadius) {
-        debugPrint('🏀 Shot prediction: WILL GO IN (distance: ${distance.toStringAsFixed(1)}px)');
-        return true;
+    // Find crossing points: last point above rim, first point below rim
+    Offset? pointAboveRim;
+    Offset? pointBelowRim;
+
+    // Search backwards through trajectory
+    for (int i = ballPoints.length - 1; i >= 0; i--) {
+      if (ballPoints[i].dy < rimHeight && pointAboveRim == null) {
+        pointAboveRim = ballPoints[i];
+        // Get the next point (which should be below)
+        if (i + 1 < ballPoints.length) {
+          pointBelowRim = ballPoints[i + 1];
+        }
+        break;
       }
     }
 
-    // Also check final predicted point
-    final finalPoint = predictedPath.last;
-    final finalDistance = (finalPoint - hoopPosition).distance;
-    debugPrint('🏀 Shot prediction: WILL MISS (closest: ${finalDistance.toStringAsFixed(1)}px)');
+    if (pointAboveRim == null || pointBelowRim == null) {
+      debugPrint('❌ No rim crossing detected');
+      return false;
+    }
 
-    return false;
+    // Linear interpolation to find X coordinate at rim height
+    // Formula: x = x1 + (x2 - x1) * (rimHeight - y1) / (y2 - y1)
+    final x1 = pointAboveRim.dx;
+    final y1 = pointAboveRim.dy;
+    final x2 = pointBelowRim.dx;
+    final y2 = pointBelowRim.dy;
+
+    final predictedX = x1 + (x2 - x1) * (rimHeight - y1) / (y2 - y1);
+
+    // Calculate rim boundaries (use 0.8 * diameter for make detection)
+    final rimLeft = hoopPosition.dx - (hoopRadius * 0.8);
+    final rimRight = hoopPosition.dx + (hoopRadius * 0.8);
+
+    final willMake = predictedX >= rimLeft && predictedX <= rimRight;
+
+    debugPrint(
+      '🏀 Rim crossing at x=${predictedX.toStringAsFixed(1)} '
+      '(rim: ${rimLeft.toStringAsFixed(1)} - ${rimRight.toStringAsFixed(1)}) '
+      '→ ${willMake ? "MAKE" : "MISS"}',
+    );
+
+    return willMake;
   }
 
   /// Calculate shot accuracy percentage based on trajectory
