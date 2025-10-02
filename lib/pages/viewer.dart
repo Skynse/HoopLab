@@ -132,7 +132,7 @@ class _ViewerPageState extends State<ViewerPage> {
       // Calculate frame extraction parameters
       final videoDurationMs = (metadata.duration * 1000).round();
       final targetFPS =
-          5.0; // Extract 15 frames per second for smoother analysis
+          10.0; // Extract 15 frames per second for smoother analysis
       final totalFramesToExtract = (metadata.duration * targetFPS).ceil();
       final frameIntervalMs = videoDurationMs / totalFramesToExtract;
 
@@ -164,7 +164,7 @@ class _ViewerPageState extends State<ViewerPage> {
             thumbnailPath: framePath,
             imageFormat: ImageFormat.JPEG,
             timeMs: positionMs,
-            quality: 60,
+            quality: 50,
           );
 
           if (thumbnailPath != null && File(thumbnailPath).existsSync()) {
