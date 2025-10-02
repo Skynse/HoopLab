@@ -132,7 +132,7 @@ class _ViewerPageState extends State<ViewerPage> {
       // Calculate frame extraction parameters
       final videoDurationMs = (metadata.duration * 1000).round();
       final targetFPS =
-          15.0; // Extract 15 frames per second for smoother analysis
+          5.0; // Extract 15 frames per second for smoother analysis
       final totalFramesToExtract = (metadata.duration * targetFPS).ceil();
       final frameIntervalMs = videoDurationMs / totalFramesToExtract;
 
@@ -152,9 +152,11 @@ class _ViewerPageState extends State<ViewerPage> {
         final framePath = p.join(framesDir.path, frameName);
 
         try {
-          debugPrint(
-            '🎬 Extracting frame $i at ${positionMs}ms (${(positionMs / 1000.0).toStringAsFixed(2)}s)',
-          );
+          if (i % 20 == 0) {
+            debugPrint(
+              '🎬 Extracting frame $i at ${positionMs}ms (${(positionMs / 1000.0).toStringAsFixed(2)}s)',
+            );
+          }
 
           // Generate thumbnail at specific timestamp using video_thumbnail
           final thumbnailPath = await VideoThumbnail.thumbnailFile(
@@ -162,7 +164,7 @@ class _ViewerPageState extends State<ViewerPage> {
             thumbnailPath: framePath,
             imageFormat: ImageFormat.JPEG,
             timeMs: positionMs,
-            quality: 85,
+            quality: 60,
           );
 
           if (thumbnailPath != null && File(thumbnailPath).existsSync()) {
@@ -330,7 +332,9 @@ class _ViewerPageState extends State<ViewerPage> {
             _isInDownRegion(ballPos, hoopPosition, ball.bbox)) {
           inDownRegion = true;
           downFrameIndex = i;
-          debugPrint('🏀 Ball in DOWN region at frame $i (${frame.timestamp}s)');
+          debugPrint(
+            '🏀 Ball in DOWN region at frame $i (${frame.timestamp}s)',
+          );
         }
 
         // Shot complete: went from UP → DOWN
