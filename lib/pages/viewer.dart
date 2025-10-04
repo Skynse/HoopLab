@@ -8,25 +8,10 @@ import 'package:hooplab/widgets/clean_video_player.dart';
 import 'package:hooplab/widgets/trajectory_overlay.dart';
 import 'package:hooplab/utils/trajectory_prediction.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
+import 'package:pro_video_editor/pro_video_editor.dart';
 
 import 'package:path/path.dart' as p;
 import 'package:video_thumbnail/video_thumbnail.dart';
-
-class VideoMetadata {
-  final double fps;
-  final double duration;
-  final int width;
-  final int height;
-  final int totalFrames;
-
-  VideoMetadata({
-    required this.fps,
-    required this.duration,
-    required this.width,
-    required this.height,
-    required this.totalFrames,
-  });
-}
 
 class ViewerPage extends StatefulWidget {
   final String? videoPath;
@@ -94,46 +79,25 @@ class _ViewerPageState extends State<ViewerPage> {
         return null;
       }
 
-      // Get actual video metadata from the video player
-      debugPrint('📊 Getting video metadata from player...');
+      // Get actual video metadata using ProVideoEditor
+      debugPrint('📊 Getting video metadata using ProVideoEditor...');
 
-      // Wait for video player to be initialized
-      int retries = 0;
-      while (_videoPlayerKey.currentState == null && retries < 20) {
-        await Future.delayed(const Duration(milliseconds: 100));
-        retries++;
-      }
+      final video = EditorVideo.file(widget.videoPath!);
+      final metadata = await ProVideoEditor.instance.getMetadata(video);
 
-      final playerState = _videoPlayerKey.currentState;
-      final actualDuration =
-          playerState?.duration.inMilliseconds.toDouble() ?? 0;
-      final videoSize = playerState?.videoSize ?? const Size(1920, 1080);
-
-      // Use actual video duration if available, otherwise estimate
-      final videoDurationSeconds = actualDuration > 0
-          ? actualDuration / 1000.0
-          : (await File(widget.videoPath!).length() / (1024 * 1024 * 2)).clamp(
-              5.0,
-              120.0,
-            );
-
-      final metadata = VideoMetadata(
-        fps: 30.0, // Standard assumption
-        duration: videoDurationSeconds,
-        width: videoSize.width.toInt(),
-        height: videoSize.height.toInt(),
-        totalFrames: (30.0 * videoDurationSeconds).round(),
-      );
+      final videoDurationSeconds = metadata.duration.inSeconds.toDouble();
+      final videoWidth = metadata.resolution.width.toInt();
+      final videoHeight = metadata.resolution.height.toInt();
 
       debugPrint(
-        '📊 Video metadata: ${metadata.width}x${metadata.height}, ${metadata.duration}s (${actualDuration > 0 ? "ACTUAL" : "ESTIMATED"})',
+        '📊 Video metadata: ${videoWidth}x${videoHeight}, ${videoDurationSeconds}s',
       );
 
       // Calculate frame extraction parameters
-      final videoDurationMs = (metadata.duration * 1000).round();
+      final videoDurationMs = metadata.duration.inMilliseconds;
       final targetFPS =
           15.0; // Extract 15 frames per second for smoother analysis
-      final totalFramesToExtract = (metadata.duration * targetFPS).ceil();
+      final totalFramesToExtract = (videoDurationSeconds * targetFPS).ceil();
       final frameIntervalMs = videoDurationMs / totalFramesToExtract;
 
       debugPrint(
@@ -213,8 +177,8 @@ class _ViewerPageState extends State<ViewerPage> {
         'total_frames': totalFramesToExtract,
         'extracted_frames': extractedFramesCount,
         'frame_interval': frameIntervalMs,
-        'width': metadata.width,
-        'height': metadata.height,
+        'width': videoWidth,
+        'height': videoHeight,
         'frames_directory': framesDir.path,
         'frames': frameData,
       };

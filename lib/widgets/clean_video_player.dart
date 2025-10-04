@@ -1,5 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
-import 'package:better_player_plus/better_player_plus.dart';
+import 'package:video_player/video_player.dart';
 
 class CleanVideoPlayer extends StatefulWidget {
   final String videoPath;
@@ -20,7 +22,7 @@ class CleanVideoPlayer extends StatefulWidget {
 }
 
 class CleanVideoPlayerState extends State<CleanVideoPlayer> {
-  late BetterPlayerController _controller;
+  late VideoPlayerController _controller;
   bool _isInitialized = false;
   double _aspectRatio = 16 / 9; // Default aspect ratio
 
@@ -30,53 +32,31 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
     _initializeVideoPlayer();
   }
 
-  void _initializeVideoPlayer() {
-    final betterPlayerConfiguration = BetterPlayerConfiguration(
-      aspectRatio: null, // Let the video determine its own aspect ratio
-      autoPlay: false,
-      looping: false,
-      fit: BoxFit.contain, // Prevent stretching
-      controlsConfiguration: const BetterPlayerControlsConfiguration(
-        showControls: false, // Disable built-in controls completely
-        showControlsOnInitialize: false,
-        enableSkips: false,
-        enableFullscreen: false,
-        enableMute: false,
-        enablePlayPause: false,
-        enableProgressBar: false,
-        enableProgressBarDrag: false,
-        enableProgressText: false,
-      ),
-    );
+  void _initializeVideoPlayer() async {
+    _controller = VideoPlayerController.file(File(widget.videoPath));
 
-    final dataSource = BetterPlayerDataSource(
-      BetterPlayerDataSourceType.file,
-      widget.videoPath,
-    );
+    await _controller.initialize();
+    await _controller.setLooping(false);
 
-    _controller = BetterPlayerController(betterPlayerConfiguration);
-    _controller.setupDataSource(dataSource).then((_) {
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-          // Get actual video dimensions for aspect ratio
-          final videoPlayerController = _controller.videoPlayerController;
-          if (videoPlayerController != null && videoPlayerController.value.size != Size.zero) {
-            _aspectRatio = videoPlayerController.value.size!.width /
-                          videoPlayerController.value.size!.height;
-          }
-        });
+    if (mounted) {
+      setState(() {
+        _isInitialized = true;
+        // Get actual video dimensions for aspect ratio
+        if (_controller.value.size != Size.zero) {
+          _aspectRatio =
+              _controller.value.size.width / _controller.value.size.height;
+        }
+      });
 
-        widget.onVideoReady?.call();
+      widget.onVideoReady?.call();
 
-        // Listen to position changes
-        _controller.addEventsListener((event) {
-          if (event.betterPlayerEventType == BetterPlayerEventType.progress) {
-            widget.onPositionChanged?.call(event.parameters?['progress'] ?? Duration.zero);
-          }
-        });
-      }
-    });
+      // Listen to position changes
+      _controller.addListener(() {
+        if (mounted) {
+          widget.onPositionChanged?.call(_controller.value.position);
+        }
+      });
+    }
   }
 
   @override
@@ -102,22 +82,22 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
 
   /// Get current position
   Duration get currentPosition {
-    return _controller.videoPlayerController?.value.position ?? Duration.zero;
+    return _controller.value.position;
   }
 
   /// Get video duration
   Duration get duration {
-    return _controller.videoPlayerController?.value.duration ?? Duration.zero;
+    return _controller.value.duration;
   }
 
   /// Get video size
   Size get videoSize {
-    return _controller.videoPlayerController?.value.size ?? const Size(1920, 1080);
+    return _controller.value.size;
   }
 
   /// Check if video is playing
   bool get isPlaying {
-    return _controller.videoPlayerController?.value.isPlaying ?? false;
+    return _controller.value.isPlaying;
   }
 
   @override
@@ -139,7 +119,7 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
           child: Stack(
             children: [
               // Video player
-              BetterPlayer(controller: _controller),
+              VideoPlayer(_controller),
 
               // Custom overlay (for trajectory, etc.)
               if (widget.overlay != null)
