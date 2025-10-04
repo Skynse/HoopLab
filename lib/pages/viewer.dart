@@ -37,6 +37,7 @@ class _ViewerPageState extends State<ViewerPage> {
   int totalDetections = 0;
   int curFrame = 0;
   int currentShotIndex = 0; // Track which shot we're viewing
+  bool _isCancelled = false; // Track if extraction is cancelled
 
   // Video handled by CleanVideoPlayer
 
@@ -98,58 +99,82 @@ class _ViewerPageState extends State<ViewerPage> {
       final targetFPS =
           15.0; // Extract 15 frames per second for smoother analysis
       final totalFramesToExtract = (videoDurationSeconds * targetFPS).ceil();
-      final frameIntervalMs = videoDurationMs / totalFramesToExtract;
+      final segmentDuration = videoDurationMs / totalFramesToExtract;
 
       debugPrint(
-        '🎯 Extracting $totalFramesToExtract frames at ${targetFPS}fps interval (${frameIntervalMs.toStringAsFixed(1)}ms apart)',
+        '🎯 Extracting $totalFramesToExtract frames at ${targetFPS}fps interval (${segmentDuration.toStringAsFixed(1)}ms apart)',
       );
+
+      // Update progress
+      if (mounted) {
+        setState(() {
+          analysisStatus = 'Extracting frames using ProVideoEditor...';
+        });
+      }
+
+      // Check if cancelled before expensive operation
+      if (_isCancelled) {
+        debugPrint('❌ Frame extraction cancelled');
+        return null;
+      }
+
+      // Extract frames using ProVideoEditor getThumbnails
+      final thumbnailList = await ProVideoEditor.instance.getThumbnails(
+        ThumbnailConfigs(
+          video: video,
+          outputSize: Size(videoWidth.toDouble(), videoHeight.toDouble()),
+          boxFit: ThumbnailBoxFit.contain,
+          timestamps: List.generate(totalFramesToExtract, (i) {
+            final midpointMs = (i + 0.5) * segmentDuration;
+            return Duration(milliseconds: midpointMs.round());
+          }),
+          outputFormat: ThumbnailFormat.jpeg,
+        ),
+      );
+
+      // Check if cancelled after extraction
+      if (_isCancelled) {
+        debugPrint('❌ Frame extraction cancelled after thumbnail generation');
+        return null;
+      }
+
+      debugPrint('🎉 Successfully extracted ${thumbnailList.length} frames');
 
       // Create temporary directory for frames
       final framesDir = Directory.systemTemp.createTempSync('hooplab_frames');
 
       List<Map<String, dynamic>> frameData = [];
 
-      // Extract frames at regular intervals using video_thumbnail
-      for (int i = 0; i < totalFramesToExtract; i++) {
-        final positionMs = (i * frameIntervalMs).round();
+      // Save thumbnails to disk
+      for (int i = 0; i < thumbnailList.length; i++) {
+        // Check if cancelled during file writing
+        if (_isCancelled) {
+          debugPrint('❌ Frame extraction cancelled during file writing');
+          return null;
+        }
+
+        final thumbnailBytes = thumbnailList[i];
+        final positionMs = ((i + 0.5) * segmentDuration).round();
         final frameName = 'frame_${i.toString().padLeft(6, '0')}.jpg';
         final framePath = p.join(framesDir.path, frameName);
 
         try {
+          // Save thumbnail bytes to file
+          final frameFile = File(framePath);
+          await frameFile.writeAsBytes(thumbnailBytes);
+
+          frameData.add({
+            'frame_index': i,
+            'extracted_index': i,
+            'timestamp': positionMs / 1000.0,
+            'filename': frameName,
+            'path': framePath,
+            'file_size': thumbnailBytes.length,
+          });
+
           if (i % 20 == 0) {
             debugPrint(
-              '🎬 Extracting frame $i at ${positionMs}ms (${(positionMs / 1000.0).toStringAsFixed(2)}s)',
-            );
-          }
-
-          // Generate thumbnail at specific timestamp using video_thumbnail
-          final thumbnailPath = await VideoThumbnail.thumbnailFile(
-            video: widget.videoPath!,
-            thumbnailPath: framePath,
-            imageFormat: ImageFormat.JPEG,
-            timeMs: positionMs,
-            quality: 50,
-          );
-
-          if (thumbnailPath != null && File(thumbnailPath).existsSync()) {
-            final frameFile = File(thumbnailPath);
-            final fileSize = frameFile.lengthSync();
-
-            frameData.add({
-              'frame_index': i,
-              'extracted_index': i,
-              'timestamp': positionMs / 1000.0,
-              'filename': frameName,
-              'path': thumbnailPath,
-              'file_size': fileSize,
-            });
-
-            debugPrint(
-              '✅ Extracted frame $i at ${(positionMs / 1000.0).toStringAsFixed(2)}s (${fileSize} bytes)',
-            );
-          } else {
-            debugPrint(
-              '⚠️ Failed to extract frame $i at ${(positionMs / 1000.0).toStringAsFixed(2)}s',
+              '✅ Saved frame $i at ${(positionMs / 1000.0).toStringAsFixed(2)}s (${thumbnailBytes.length} bytes)',
             );
           }
 
@@ -161,7 +186,7 @@ class _ViewerPageState extends State<ViewerPage> {
             });
           }
         } catch (e) {
-          debugPrint('❌ Error extracting frame $i: $e');
+          debugPrint('❌ Error saving frame $i: $e');
           continue;
         }
       }
@@ -176,7 +201,7 @@ class _ViewerPageState extends State<ViewerPage> {
             : 30.0,
         'total_frames': totalFramesToExtract,
         'extracted_frames': extractedFramesCount,
-        'frame_interval': frameIntervalMs,
+        'frame_interval': segmentDuration,
         'width': videoWidth,
         'height': videoHeight,
         'frames_directory': framesDir.path,
@@ -452,6 +477,7 @@ class _ViewerPageState extends State<ViewerPage> {
 
   @override
   void dispose() {
+    _isCancelled = true; // Cancel any ongoing frame extraction
     _seekDebounceTimer?.cancel();
     analysisSubscription?.cancel();
     _frameCache.clear();
@@ -466,8 +492,9 @@ class _ViewerPageState extends State<ViewerPage> {
 
     final Map<String, dynamic>? frameResponse = await extractVideoFrames();
 
-    if (frameResponse == null) {
-      print("FRAME RESPONSE EMPTY");
+    if (frameResponse == null || _isCancelled) {
+      debugPrint("❌ Frame extraction failed or cancelled");
+      return;
     }
 
     /*
@@ -495,6 +522,12 @@ class _ViewerPageState extends State<ViewerPage> {
     final analyzeEveryNthFrame = (30.0 * 0.1)
         .round(); // Analyze every 0.5 seconds
     for (int idx = 0; idx < frameResponse!['extracted_frames']; idx += 1) {
+      // Check if cancelled during analysis
+      if (_isCancelled) {
+        debugPrint('❌ Analysis cancelled during YOLO processing');
+        return;
+      }
+
       try {
         final frameNumber = idx;
         final frameInfo = frameResponse['frames'][idx];
@@ -662,6 +695,7 @@ class _ViewerPageState extends State<ViewerPage> {
                           onPressed: () async {
                             setState(() {
                               isAnalyzing = true;
+                              _isCancelled = false; // Reset cancellation flag
                               clip.frames.clear();
                               clip.shots.clear();
                               totalDetections = 0;
