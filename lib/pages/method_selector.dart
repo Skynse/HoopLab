@@ -1,7 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:hooplab/pages/camera.dart';
-import 'package:hooplab/pages/viewer.dart';
+import 'package:hooplab/pages/viewer.dart' as viewer;
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:pro_image_editor/pro_image_editor.dart';
+import 'package:pro_video_editor/pro_video_editor.dart';
+import 'package:video_player/video_player.dart';
 
 class MethodSelector extends StatefulWidget {
   const MethodSelector({super.key});
@@ -10,7 +16,8 @@ class MethodSelector extends StatefulWidget {
   State<MethodSelector> createState() => _MethodSelectorState();
 }
 
-class _MethodSelectorState extends State<MethodSelector> with SingleTickerProviderStateMixin {
+class _MethodSelectorState extends State<MethodSelector>
+    with SingleTickerProviderStateMixin {
   bool _isLoading = false;
   final ImagePicker _picker = ImagePicker();
   late AnimationController _animationController;
@@ -29,14 +36,10 @@ class _MethodSelectorState extends State<MethodSelector> with SingleTickerProvid
       duration: const Duration(milliseconds: 800),
       vsync: this,
     );
-    _fadeAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeInOut,
-    ));
-    
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
+    );
+
     // Start entrance animation
     _animationController.forward();
   }
@@ -50,9 +53,9 @@ class _MethodSelectorState extends State<MethodSelector> with SingleTickerProvid
   // Prevent multiple simultaneous operations
   Future<void> _handleCameraPress() async {
     if (_isLoading) return;
-    
+
     _setLoading(true);
-    
+
     try {
       await Navigator.push(
         context,
@@ -66,22 +69,43 @@ class _MethodSelectorState extends State<MethodSelector> with SingleTickerProvid
   // Handle gallery selection with proper error handling
   Future<void> _handleGalleryPress() async {
     if (_isLoading) return;
-    
+
     _setLoading(true);
-    
+
     try {
       final XFile? video = await _picker.pickVideo(
         source: ImageSource.gallery,
-        maxDuration: const Duration(minutes: 10), // Optional: limit video length
+        maxDuration: const Duration(
+          minutes: 10,
+        ), // Optional: limit video length
       );
-      
+
       if (video != null && mounted) {
-        await Navigator.push(
+        // Navigate to trimmer first
+        final TrimDurationSpan? trimResult = await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => ViewerPage(videoPath: video.path),
+            builder: (context) => VideoTrimmer(originalVideoPath: video.path),
           ),
         );
+
+        if (trimResult != null && mounted) {
+          // Generate trimmed video
+          final trimmedPath = await _generateTrimmedVideo(
+            video.path,
+            trimResult,
+          );
+
+          if (trimmedPath != null && mounted) {
+            // Navigate to viewer with trimmed video
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => viewer.ViewerPage(videoPath: trimmedPath),
+              ),
+            );
+          }
+        }
       }
     } catch (e) {
       // Handle errors gracefully
@@ -92,6 +116,61 @@ class _MethodSelectorState extends State<MethodSelector> with SingleTickerProvid
       if (mounted) {
         _setLoading(false);
       }
+    }
+  }
+
+  Future<String?> _generateTrimmedVideo(
+    String videoPath,
+    TrimDurationSpan trimSpan,
+  ) async {
+    try {
+      if (!mounted) return null;
+
+      // Show loading dialog
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const AlertDialog(
+          content: Row(
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(width: 16),
+              Text('Trimming video...'),
+            ],
+          ),
+        ),
+      );
+
+      final video = EditorVideo.file(videoPath);
+      final directory = await getTemporaryDirectory();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final outputPath = '${directory.path}/trimmed_video_$now.mp4';
+
+      final exportModel = RenderVideoModel(
+        id: now.toString(),
+        video: video,
+        outputFormat: VideoOutputFormat.mp4,
+        enableAudio: true,
+        startTime: trimSpan.start,
+        endTime: trimSpan.end,
+      );
+
+      final trimmedPath = await ProVideoEditor.instance.renderVideoToFile(
+        outputPath,
+        exportModel,
+      );
+
+      if (mounted) {
+        Navigator.pop(context); // Close loading dialog
+      }
+
+      return trimmedPath;
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // Close loading dialog
+        _showErrorSnackBar('Failed to trim video: $e');
+      }
+      return null;
     }
   }
 
@@ -117,7 +196,7 @@ class _MethodSelectorState extends State<MethodSelector> with SingleTickerProvid
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    
+
     return Scaffold(
       backgroundColor: colorScheme.surface,
       appBar: AppBar(
@@ -146,12 +225,12 @@ class _MethodSelectorState extends State<MethodSelector> with SingleTickerProvid
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 48),
-                
+
                 // Responsive layout
                 LayoutBuilder(
                   builder: (context, constraints) {
                     final isWide = constraints.maxWidth > 600;
-                    
+
                     if (isWide) {
                       return Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -172,7 +251,7 @@ class _MethodSelectorState extends State<MethodSelector> with SingleTickerProvid
                     }
                   },
                 ),
-                
+
                 if (_isLoading) ...[
                   const SizedBox(height: 32),
                   const CircularProgressIndicator(),
@@ -237,7 +316,7 @@ class _MethodButton extends StatefulWidget {
   State<_MethodButton> createState() => _MethodButtonState();
 }
 
-class _MethodButtonState extends State<_MethodButton> 
+class _MethodButtonState extends State<_MethodButton>
     with SingleTickerProviderStateMixin {
   late AnimationController _scaleController;
   late Animation<double> _scaleAnimation;
@@ -249,13 +328,9 @@ class _MethodButtonState extends State<_MethodButton>
       duration: const Duration(milliseconds: 150),
       vsync: this,
     );
-    _scaleAnimation = Tween<double>(
-      begin: 1.0,
-      end: 0.95,
-    ).animate(CurvedAnimation(
-      parent: _scaleController,
-      curve: Curves.easeInOut,
-    ));
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.95).animate(
+      CurvedAnimation(parent: _scaleController, curve: Curves.easeInOut),
+    );
   }
 
   @override
@@ -268,7 +343,7 @@ class _MethodButtonState extends State<_MethodButton>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isEnabled = widget.onPressed != null && !widget.isLoading;
-    
+
     return ScaleTransition(
       scale: _scaleAnimation,
       child: GestureDetector(
@@ -295,7 +370,7 @@ class _MethodButtonState extends State<_MethodButton>
             ),
             borderRadius: BorderRadius.circular(16.0),
             border: Border.all(
-              color: isEnabled 
+              color: isEnabled
                   ? widget.color.withOpacity(0.3)
                   : theme.colorScheme.onSurface.withOpacity(0.1),
               width: 2,
@@ -317,7 +392,7 @@ class _MethodButtonState extends State<_MethodButton>
                 duration: const Duration(milliseconds: 200),
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: isEnabled 
+                  color: isEnabled
                       ? widget.color.withOpacity(0.1)
                       : theme.colorScheme.onSurface.withOpacity(0.05),
                   shape: BoxShape.circle,
@@ -325,7 +400,7 @@ class _MethodButtonState extends State<_MethodButton>
                 child: Icon(
                   widget.icon,
                   size: 48.0,
-                  color: isEnabled 
+                  color: isEnabled
                       ? widget.color
                       : theme.colorScheme.onSurface.withOpacity(0.3),
                 ),
@@ -335,7 +410,7 @@ class _MethodButtonState extends State<_MethodButton>
                 widget.title,
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.w600,
-                  color: isEnabled 
+                  color: isEnabled
                       ? theme.colorScheme.onSurface
                       : theme.colorScheme.onSurface.withOpacity(0.3),
                 ),
@@ -344,12 +419,231 @@ class _MethodButtonState extends State<_MethodButton>
               Text(
                 widget.subtitle,
                 style: theme.textTheme.bodyMedium?.copyWith(
-                  color: isEnabled 
+                  color: isEnabled
                       ? theme.colorScheme.onSurface.withOpacity(0.7)
                       : theme.colorScheme.onSurface.withOpacity(0.3),
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class VideoTrimmer extends StatefulWidget {
+  final String originalVideoPath;
+  const VideoTrimmer({Key? key, required this.originalVideoPath})
+    : super(key: key);
+
+  @override
+  _VideoTrimmerState createState() => _VideoTrimmerState();
+}
+
+class _VideoTrimmerState extends State<VideoTrimmer> {
+  VideoPlayerController? _videoController;
+  ProVideoController? _proVideoController;
+  VideoMetadata? _videoMetadata;
+  List<ImageProvider>? _thumbnails;
+  bool _isInitializing = true;
+  bool _isSeeking = false;
+  TrimDurationSpan? _durationSpan;
+  TrimDurationSpan? _tempDurationSpan;
+
+  final int _thumbnailCount = 7;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeVideo();
+  }
+
+  @override
+  void dispose() {
+    _videoController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initializeVideo() async {
+    try {
+      // Get video metadata
+      final video = EditorVideo.file(widget.originalVideoPath);
+      _videoMetadata = await ProVideoEditor.instance.getMetadata(video);
+
+      // Initialize video player
+      _videoController = VideoPlayerController.file(
+        File(widget.originalVideoPath),
+      );
+      await _videoController!.initialize();
+      await _videoController!.setLooping(false);
+      await _videoController!.setVolume(0);
+
+      // Generate thumbnails
+      await _generateThumbnails(video);
+
+      // Create ProVideoController
+      _proVideoController = ProVideoController(
+        videoPlayer: _buildVideoPlayer(),
+        initialResolution: _videoMetadata!.resolution,
+        videoDuration: _videoMetadata!.duration,
+        fileSize: _videoMetadata!.fileSize,
+        thumbnails: _thumbnails,
+      );
+
+      _videoController!.addListener(_onVideoPositionChange);
+
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to load video: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        Navigator.pop(context);
+      }
+    }
+  }
+
+  Future<void> _generateThumbnails(EditorVideo video) async {
+    final imageWidth =
+        MediaQuery.of(context).size.width /
+        _thumbnailCount *
+        MediaQuery.of(context).devicePixelRatio;
+
+    final duration = _videoMetadata!.duration;
+    final segmentDuration = duration.inMilliseconds / _thumbnailCount;
+
+    final thumbnailList = await ProVideoEditor.instance.getThumbnails(
+      ThumbnailConfigs(
+        video: video,
+        outputSize: Size.square(imageWidth),
+        boxFit: ThumbnailBoxFit.cover,
+        timestamps: List.generate(_thumbnailCount, (i) {
+          final midpointMs = (i + 0.5) * segmentDuration;
+          return Duration(milliseconds: midpointMs.round());
+        }),
+        outputFormat: ThumbnailFormat.jpeg,
+      ),
+    );
+
+    _thumbnails = thumbnailList.map(MemoryImage.new).toList();
+
+    // Precache thumbnails
+    await Future.wait(_thumbnails!.map((item) => precacheImage(item, context)));
+  }
+
+  void _onVideoPositionChange() {
+    final duration = _videoController!.value.position;
+    _proVideoController?.setPlayTime(duration);
+
+    if (_durationSpan != null && duration >= _durationSpan!.end) {
+      _seekToPosition(_durationSpan!);
+    } else if (duration >= _videoMetadata!.duration) {
+      _seekToPosition(
+        TrimDurationSpan(start: Duration.zero, end: _videoMetadata!.duration),
+      );
+    }
+  }
+
+  Future<void> _seekToPosition(TrimDurationSpan span) async {
+    _durationSpan = span;
+
+    if (_isSeeking) {
+      _tempDurationSpan = span;
+      return;
+    }
+    _isSeeking = true;
+
+    _proVideoController?.pause();
+    _proVideoController?.setPlayTime(_durationSpan!.start);
+
+    await _videoController?.pause();
+    await _videoController?.seekTo(span.start);
+
+    _isSeeking = false;
+
+    if (_tempDurationSpan != null) {
+      TrimDurationSpan nextSeek = _tempDurationSpan!;
+      _tempDurationSpan = null;
+      await _seekToPosition(nextSeek);
+    }
+  }
+
+  Future<void> _saveTrimmedVideo() async {
+    if (_durationSpan == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please set trim points'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Return the trim span to the calling page
+    Navigator.pop(context, _durationSpan);
+  }
+
+  Widget _buildVideoPlayer() {
+    return Center(
+      child: AspectRatio(
+        aspectRatio: _videoController!.value.size.aspectRatio,
+        child: VideoPlayer(_videoController!),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isInitializing) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Trim Video')),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Trim Video'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.check),
+            onPressed: _saveTrimmedVideo,
+            tooltip: 'Save',
+          ),
+        ],
+      ),
+      body: ProImageEditor.video(
+        _proVideoController!,
+        callbacks: ProImageEditorCallbacks(
+          videoEditorCallbacks: VideoEditorCallbacks(
+            onPause: _videoController!.pause,
+            onPlay: _videoController!.play,
+            onMuteToggle: (isMuted) {
+              _videoController!.setVolume(isMuted ? 0 : 100);
+            },
+            onTrimSpanUpdate: (durationSpan) {
+              if (_videoController!.value.isPlaying) {
+                _proVideoController?.pause();
+              }
+            },
+            onTrimSpanEnd: _seekToPosition,
+          ),
+        ),
+        configs: ProImageEditorConfigs(
+          videoEditor: VideoEditorConfigs(
+            initialMuted: true,
+            initialPlay: false,
+            isAudioSupported: true,
+            minTrimDuration: const Duration(seconds: 1),
+            playTimeSmoothingDuration: const Duration(milliseconds: 600),
           ),
         ),
       ),

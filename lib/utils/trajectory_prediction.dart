@@ -37,7 +37,8 @@ class TrajectoryPredictor {
 
       // If we have a hoop position, stop prediction near the hoop
       if (hoopPosition != null) {
-        final distanceToHoop = (Offset(predictedX, predictedY) - hoopPosition).distance;
+        final distanceToHoop =
+            (Offset(predictedX, predictedY) - hoopPosition).distance;
         if (distanceToHoop < 50) break; // Stop within 50 pixels of hoop
       }
     }
@@ -53,6 +54,16 @@ class TrajectoryPredictor {
     required Offset hoopPosition,
     double hoopRadius = 30.0,
   }) {
+    // add  more point in-between ballPoints if not enough
+    final int originalLength = ballPoints.length;
+    for (int i = 1; i < originalLength; i++) {
+      Offset point1 = ballPoints[i - 1];
+      Offset point2 = ballPoints[i];
+
+      Offset inBetween = Offset.lerp(point1, point2, 0.5)!;
+      Offset insertPoint = Offset.lerp(point1, inBetween, 0.5)!;
+      ballPoints.insert(i, insertPoint);
+    }
     if (ballPoints.length < 3) return false;
 
     // Calculate rim height (top of hoop)
@@ -128,7 +139,10 @@ class TrajectoryPredictor {
 
     // Convert distance to accuracy percentage (closer = higher accuracy)
     const maxDistance = 100.0; // pixels
-    final accuracy = ((maxDistance - closestDistance) / maxDistance).clamp(0.0, 1.0);
+    final accuracy = ((maxDistance - closestDistance) / maxDistance).clamp(
+      0.0,
+      1.0,
+    );
 
     return accuracy * 100; // Return as percentage
   }
