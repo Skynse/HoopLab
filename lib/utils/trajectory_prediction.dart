@@ -46,6 +46,58 @@ class TrajectoryPredictor {
     return predictedPoints;
   }
 
+  /// Predict corrected arc trajectory for missed shots
+  /// Returns the arc that would have made the shot go in
+  static List<Offset> predictCorrectedArc({
+    required List<Offset> ballPoints,
+    required Offset hoopPosition,
+    int predictionSteps = 30,
+  }) {
+    if (ballPoints.length < 3) return [];
+
+    // Use the first few points to determine initial trajectory
+    final startPoints = ballPoints.length > 5
+        ? ballPoints.sublist(0, 5)
+        : ballPoints;
+
+    if (startPoints.length < 2) return [];
+
+    // Get the starting point and initial velocity direction
+    final startPoint = startPoints.first;
+    final secondPoint = startPoints[1];
+
+    // Calculate initial direction
+    final initialDx = secondPoint.dx - startPoint.dx;
+    final initialDy = secondPoint.dy - startPoint.dy;
+
+    // Calculate the arc that would reach the hoop center
+    final dx = hoopPosition.dx - startPoint.dx;
+    final dy = hoopPosition.dy - startPoint.dy;
+
+    List<Offset> correctedArc = [];
+
+    // Create a parabolic arc from start to hoop
+    for (int i = 0; i <= predictionSteps; i++) {
+      final t = i / predictionSteps;
+
+      // Parabolic interpolation
+      // x follows linear path
+      final x = startPoint.dx + dx * t;
+
+      // y follows parabolic path with peak in the middle
+      final peakHeight =
+          min(startPoint.dy, hoopPosition.dy) - 100; // Arc 100px above
+      final y =
+          startPoint.dy +
+          dy * t +
+          4 * (peakHeight - startPoint.dy) * t * (1 - t);
+
+      correctedArc.add(Offset(x, y));
+    }
+
+    return correctedArc;
+  }
+
   /// Check if predicted trajectory intersects with hoop (shot success detection)
   /// Check if shot will go in using rim-crossing detection
   /// Uses linear interpolation between last point above rim and first point below rim

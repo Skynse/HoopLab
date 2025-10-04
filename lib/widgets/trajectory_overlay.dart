@@ -250,37 +250,175 @@ class TrajectoryPainter extends CustomPainter {
   ) {
     final ballPoints = points.map((tp) => tp.position).toList();
 
-    final predictedPoints = TrajectoryPredictor.predictTrajectory(
-      ballPoints: ballPoints,
-      hoopPosition: hoopPosition,
-      predictionSteps: 10,
-    );
-
-    if (predictedPoints.isEmpty) return;
-
-    // Scale predicted points
-    final scaledPredicted = predictedPoints
-        .map(
-          (pos) => Offset(pos.dx * scale + offsetX, pos.dy * scale + offsetY),
-        )
-        .toList();
-
     // Check if shot will go in
     final willScore = TrajectoryPredictor.willShotGoIn(
       ballPoints: ballPoints,
       hoopPosition: hoopPosition,
     );
 
-    // Draw dashed prediction line
-    final predictedPaint = Paint()
-      ..color = willScore
-          ? Colors.green.withValues(alpha: 0.8)
-          : Colors.red.withValues(alpha: 0.7)
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
+    if (willScore) {
+      // Draw normal prediction for makes
+      final predictedPoints = TrajectoryPredictor.predictTrajectory(
+        ballPoints: ballPoints,
+        hoopPosition: hoopPosition,
+        predictionSteps: 10,
+      );
 
-    _drawDashedPath(canvas, scaledPredicted, predictedPaint);
+      if (predictedPoints.isEmpty) return;
+
+      // Scale predicted points
+      final scaledPredicted = predictedPoints
+          .map(
+            (pos) => Offset(pos.dx * scale + offsetX, pos.dy * scale + offsetY),
+          )
+          .toList();
+
+      // Draw green dashed prediction line for makes
+      final predictedPaint = Paint()
+        ..color = Colors.green.withValues(alpha: 0.8)
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round;
+
+      _drawDashedPath(canvas, scaledPredicted, predictedPaint);
+    } else {
+      // Draw corrected arc for misses
+      final correctedArc = TrajectoryPredictor.predictCorrectedArc(
+        ballPoints: ballPoints,
+        hoopPosition: hoopPosition,
+        predictionSteps: 30,
+      );
+
+      if (correctedArc.isEmpty) return;
+
+      // Scale corrected arc points
+      final scaledCorrected = correctedArc
+          .map(
+            (pos) => Offset(pos.dx * scale + offsetX, pos.dy * scale + offsetY),
+          )
+          .toList();
+
+      // Draw blue dashed line for the corrected arc
+      final correctedPaint = Paint()
+        ..color = Colors.blue.withValues(alpha: 0.7)
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round;
+
+      _drawDashedPath(canvas, scaledCorrected, correctedPaint);
+
+      // Draw feedback text
+      _drawShotFeedback(
+        canvas,
+        ballPoints,
+        hoopPosition,
+        scale,
+        offsetX,
+        offsetY,
+      );
+    }
+  }
+
+  /// Draw shot feedback text for missed shots
+  void _drawShotFeedback(
+    Canvas canvas,
+    List<Offset> ballPoints,
+    Offset hoopPosition,
+    double scale,
+    double offsetX,
+    double offsetY,
+  ) {
+    if (ballPoints.length < 3) return;
+
+    // Get the last point of the actual trajectory
+    final lastBallPoint = ballPoints.last;
+
+    // Calculate horizontal difference
+    final horizontalDiff = lastBallPoint.dx - hoopPosition.dx;
+    final verticalDiff = lastBallPoint.dy - hoopPosition.dy;
+
+    // Determine feedback messages
+    String horizontalFeedback = '';
+    String verticalFeedback = '';
+
+    const horizontalThreshold = 30.0; // pixels
+    const verticalThreshold = 50.0; // pixels
+
+    // Horizontal feedback
+    if (horizontalDiff.abs() > horizontalThreshold) {
+      if (horizontalDiff > 0) {
+        horizontalFeedback = 'Aim ${(horizontalDiff / 10).round() * 10}px LEFT';
+      } else {
+        horizontalFeedback =
+            'Aim ${(horizontalDiff.abs() / 10).round() * 10}px RIGHT';
+      }
+    }
+
+    // Vertical feedback (arc height)
+    if (verticalDiff > verticalThreshold) {
+      verticalFeedback = 'Higher arc needed';
+    } else if (verticalDiff < -verticalThreshold) {
+      verticalFeedback = 'Lower arc needed';
+    }
+
+    // Combine feedback
+    List<String> feedbackLines = [];
+    if (horizontalFeedback.isNotEmpty) feedbackLines.add(horizontalFeedback);
+    if (verticalFeedback.isNotEmpty) feedbackLines.add(verticalFeedback);
+
+    if (feedbackLines.isEmpty) {
+      feedbackLines.add('Close! Small adjustment needed');
+    }
+
+    // Position feedback text near the hoop
+    final textX = hoopPosition.dx * scale + offsetX;
+    final textY = hoopPosition.dy * scale + offsetY - 60;
+
+    // Draw background for text
+    for (int i = 0; i < feedbackLines.length; i++) {
+      final text = feedbackLines[i];
+      final textSpan = TextSpan(
+        text: text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          shadows: [
+            Shadow(color: Colors.black, offset: Offset(1, 1), blurRadius: 3),
+          ],
+        ),
+      );
+
+      final textPainter = TextPainter(
+        text: textSpan,
+        textDirection: TextDirection.ltr,
+      );
+
+      textPainter.layout();
+
+      // Draw semi-transparent background
+      final backgroundRect = Rect.fromLTWH(
+        textX - textPainter.width / 2 - 8,
+        textY + (i * 25) - 4,
+        textPainter.width + 16,
+        textPainter.height + 8,
+      );
+
+      final backgroundPaint = Paint()
+        ..color = Colors.blue.withValues(alpha: 0.8)
+        ..style = PaintingStyle.fill;
+
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(backgroundRect, const Radius.circular(8)),
+        backgroundPaint,
+      );
+
+      // Draw text
+      textPainter.paint(
+        canvas,
+        Offset(textX - textPainter.width / 2, textY + (i * 25)),
+      );
+    }
   }
 
   /// Draw dashed line

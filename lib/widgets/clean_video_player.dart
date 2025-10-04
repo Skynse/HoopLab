@@ -116,15 +116,20 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
       child: Center(
         child: AspectRatio(
           aspectRatio: _aspectRatio,
-          child: Stack(
-            children: [
-              // Video player
-              VideoPlayer(_controller),
+          child: ValueListenableBuilder(
+            valueListenable: _controller,
+            builder: (context, VideoPlayerValue value, child) {
+              return Stack(
+                children: [
+                  // Video player - will rebuild when controller value changes
+                  VideoPlayer(_controller),
 
-              // Custom overlay (for trajectory, etc.)
-              if (widget.overlay != null)
-                Positioned.fill(child: widget.overlay!),
-            ],
+                  // Custom overlay (for trajectory, etc.)
+                  if (widget.overlay != null)
+                    Positioned.fill(child: widget.overlay!),
+                ],
+              );
+            },
           ),
         ),
       ),
