@@ -631,7 +631,7 @@ class DetectionPainter extends CustomPainter {
 
   void _drawHoop(Canvas canvas, Offset hoopPosition) {
     final hoopPaint = Paint()
-      ..color = Colors.orange
+      ..color = const Color(0xFF1565C0)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 4.0;
 
@@ -1016,7 +1016,7 @@ class DetectionPainter extends CustomPainter {
     for (int i = 0; i < optimalPath.length; i += 4) {
       // Show every 4th point
       final paint = Paint()
-        ..color = Colors.orange.withOpacity(0.8)
+        ..color = const Color(0xFF1565C0).withOpacity(0.8)
         ..style = PaintingStyle.fill;
 
       canvas.drawCircle(optimalPath[i], 3.0, paint);
@@ -1062,7 +1062,7 @@ class DetectionPainter extends CustomPainter {
       Colors.red,
       Colors.blue,
       Colors.green,
-      Colors.orange,
+      const Color(0xFF1565C0),
       Colors.purple,
       Colors.cyan,
       Colors.pink,

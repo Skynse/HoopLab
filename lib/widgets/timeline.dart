@@ -150,10 +150,10 @@ class _TimeLineState extends State<TimeLine> {
                 trackHeight: 6,
                 thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10),
                 overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
-                activeTrackColor: Colors.orange,
+                activeTrackColor: const Color(0xFF1565C0),
                 inactiveTrackColor: Colors.grey[300],
-                thumbColor: Colors.orange,
-                overlayColor: Colors.orange.withOpacity(0.2),
+                thumbColor: const Color(0xFF1565C0),
+                overlayColor: const Color(0xFF1565C0).withOpacity(0.2),
               ),
               child: Slider(
                 value: _sliderValue.clamp(0.0, videoDuration),
@@ -203,13 +203,14 @@ class DetectionMarkerPainter extends CustomPainter {
     if (videoDuration <= 0) return;
 
     final paint = Paint()
-      ..color = Colors.orange.withOpacity(0.6)
+      ..color = const Color(0xFF1565C0).withOpacity(0.6)
       ..style = PaintingStyle.fill;
 
     for (final frame in frames) {
       if (frame.detections.isNotEmpty) {
         final position = (frame.timestamp / videoDuration) * size.width;
-        final height = (frame.detections.length / 5).clamp(0.2, 1.0) * size.height;
+        final height =
+            (frame.detections.length / 5).clamp(0.2, 1.0) * size.height;
 
         canvas.drawRect(
           Rect.fromLTWH(position - 1, size.height - height, 2, height),

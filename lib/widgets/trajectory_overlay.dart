@@ -185,7 +185,7 @@ class TrajectoryPainter extends CustomPainter {
 
     // Ball
     final ballPaint = Paint()
-      ..color = Colors.orange
+      ..color = const Color(0xFF1565C0)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(position, 6, ballPaint);
 
@@ -300,7 +300,7 @@ class TrajectoryPainter extends CustomPainter {
 
       // Draw blue dashed line for the corrected arc
       final correctedPaint = Paint()
-        ..color = Colors.blue.withValues(alpha: 0.7)
+        ..color = Colors.green.withValues(alpha: 0.7)
         ..strokeWidth = 2
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round;

@@ -45,11 +45,13 @@ class SimpleBallTrajectory extends CustomPainter {
 
       if (ballDetections.isNotEmpty) {
         final ball = ballDetections.first;
-        trajectoryPoints.add(BallTrajectoryPoint(
-          position: Offset(ball.bbox.centerX, ball.bbox.centerY),
-          timestamp: frame.timestamp,
-          confidence: ball.confidence,
-        ));
+        trajectoryPoints.add(
+          BallTrajectoryPoint(
+            position: Offset(ball.bbox.centerX, ball.bbox.centerY),
+            timestamp: frame.timestamp,
+            confidence: ball.confidence,
+          ),
+        );
       }
     }
 
@@ -64,15 +66,18 @@ class SimpleBallTrajectory extends CustomPainter {
     // Scale coordinates to fit the widget
     final scaleX = size.width / videoSize.width;
     final scaleY = size.height / videoSize.height;
-    final scale = scaleX < scaleY ? scaleX : scaleY; // Use smaller scale to maintain aspect ratio
+    final scale = scaleX < scaleY
+        ? scaleX
+        : scaleY; // Use smaller scale to maintain aspect ratio
 
     final offsetX = (size.width - (videoSize.width * scale)) / 2;
     final offsetY = (size.height - (videoSize.height * scale)) / 2;
 
-    List<Offset> scaledPositions = ballPositions.map((pos) => Offset(
-      pos.dx * scale + offsetX,
-      pos.dy * scale + offsetY,
-    )).toList();
+    List<Offset> scaledPositions = ballPositions
+        .map(
+          (pos) => Offset(pos.dx * scale + offsetX, pos.dy * scale + offsetY),
+        )
+        .toList();
 
     // Draw the trajectory path up to current frame
     final currentPositions = scaledPositions.take(currentFrame + 1).toList();
@@ -80,7 +85,7 @@ class SimpleBallTrajectory extends CustomPainter {
     if (currentPositions.length > 1) {
       // Draw the actual path
       final pathPaint = Paint()
-        ..color = Colors.orange
+        ..color = const Color(0xFF1565C0)
         ..strokeWidth = 3
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round;
@@ -99,10 +104,14 @@ class SimpleBallTrajectory extends CustomPainter {
 
       // Draw predicted trajectory (using their linear regression method)
       if (currentPositions.length >= 3) {
-        final originalPositions = currentPositions.map((pos) => Offset(
-          (pos.dx - offsetX) / scale,
-          (pos.dy - offsetY) / scale,
-        )).toList();
+        final originalPositions = currentPositions
+            .map(
+              (pos) => Offset(
+                (pos.dx - offsetX) / scale,
+                (pos.dy - offsetY) / scale,
+              ),
+            )
+            .toList();
 
         final predictedPoints = TrajectoryPredictor.predictTrajectory(
           ballPoints: originalPositions,
@@ -112,10 +121,12 @@ class SimpleBallTrajectory extends CustomPainter {
 
         if (predictedPoints.isNotEmpty) {
           // Scale predicted points
-          final scaledPredicted = predictedPoints.map((pos) => Offset(
-            pos.dx * scale + offsetX,
-            pos.dy * scale + offsetY,
-          )).toList();
+          final scaledPredicted = predictedPoints
+              .map(
+                (pos) =>
+                    Offset(pos.dx * scale + offsetX, pos.dy * scale + offsetY),
+              )
+              .toList();
 
           // Check shot success prediction
           bool willScore = false;
@@ -176,7 +187,7 @@ class SimpleBallTrajectory extends CustomPainter {
 
         // Ball
         final ballPaint = Paint()
-          ..color = Colors.orange
+          ..color = const Color(0xFF1565C0)
           ..style = PaintingStyle.fill;
         canvas.drawCircle(currentPos, 6, ballPaint);
 
@@ -197,10 +208,12 @@ class SimpleBallTrajectory extends CustomPainter {
   Offset? _findHoopPosition() {
     for (final frame in frames) {
       final hoopDetections = frame.detections
-          .where((d) =>
-              d.label.toLowerCase().contains('hoop') ||
-              d.label.toLowerCase().contains('rim') ||
-              d.label.toLowerCase().contains('basket'))
+          .where(
+            (d) =>
+                d.label.toLowerCase().contains('hoop') ||
+                d.label.toLowerCase().contains('rim') ||
+                d.label.toLowerCase().contains('basket'),
+          )
           .toList();
 
       if (hoopDetections.isNotEmpty) {
@@ -212,7 +225,9 @@ class SimpleBallTrajectory extends CustomPainter {
   }
 
   /// Clean trajectory data using filtering techniques similar to the GitHub repo
-  List<BallTrajectoryPoint> _cleanTrajectoryData(List<BallTrajectoryPoint> rawPoints) {
+  List<BallTrajectoryPoint> _cleanTrajectoryData(
+    List<BallTrajectoryPoint> rawPoints,
+  ) {
     if (rawPoints.length < 3) return rawPoints;
 
     List<BallTrajectoryPoint> cleaned = [];
@@ -248,7 +263,9 @@ class SimpleBallTrajectory extends CustomPainter {
       if (speed < maxReasonableSpeed && distance < maxReasonableDistance) {
         cleaned.add(current);
       } else {
-        debugPrint('🏀 Filtered out outlier: speed=${speed.toStringAsFixed(1)}px/s, distance=${distance.toStringAsFixed(1)}px');
+        debugPrint(
+          '🏀 Filtered out outlier: speed=${speed.toStringAsFixed(1)}px/s, distance=${distance.toStringAsFixed(1)}px',
+        );
       }
     }
 
@@ -257,12 +274,16 @@ class SimpleBallTrajectory extends CustomPainter {
       cleaned = _applySmoothingFilter(cleaned);
     }
 
-    debugPrint('🏀 Cleaned trajectory: ${rawPoints.length} → ${cleaned.length} points');
+    debugPrint(
+      '🏀 Cleaned trajectory: ${rawPoints.length} → ${cleaned.length} points',
+    );
     return cleaned;
   }
 
   /// Apply smoothing filter to reduce noise in trajectory
-  List<BallTrajectoryPoint> _applySmoothingFilter(List<BallTrajectoryPoint> points) {
+  List<BallTrajectoryPoint> _applySmoothingFilter(
+    List<BallTrajectoryPoint> points,
+  ) {
     if (points.length < 3) return points;
 
     List<BallTrajectoryPoint> smoothed = [];
@@ -277,20 +298,24 @@ class SimpleBallTrajectory extends CustomPainter {
       int count = 0;
 
       // Average with neighbors
-      for (int j = max(0, i - windowSize ~/ 2);
-           j <= min(points.length - 1, i + windowSize ~/ 2);
-           j++) {
+      for (
+        int j = max(0, i - windowSize ~/ 2);
+        j <= min(points.length - 1, i + windowSize ~/ 2);
+        j++
+      ) {
         sumX += points[j].position.dx;
         sumY += points[j].position.dy;
         count++;
       }
 
       final smoothedPosition = Offset(sumX / count, sumY / count);
-      smoothed.add(BallTrajectoryPoint(
-        position: smoothedPosition,
-        timestamp: points[i].timestamp,
-        confidence: points[i].confidence,
-      ));
+      smoothed.add(
+        BallTrajectoryPoint(
+          position: smoothedPosition,
+          timestamp: points[i].timestamp,
+          confidence: points[i].confidence,
+        ),
+      );
     }
 
     // Keep last point
@@ -337,6 +362,6 @@ class SimpleBallTrajectory extends CustomPainter {
   @override
   bool shouldRepaint(SimpleBallTrajectory oldDelegate) {
     return currentFrame != oldDelegate.currentFrame ||
-           frames != oldDelegate.frames;
+        frames != oldDelegate.frames;
   }
 }

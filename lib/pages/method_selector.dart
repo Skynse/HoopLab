@@ -578,12 +578,9 @@ class _VideoTrimmerState extends State<VideoTrimmer> {
 
   Future<void> _saveTrimmedVideo() async {
     if (_durationSpan == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please set trim points'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Please set trim points')));
       return;
     }
 

@@ -658,7 +658,7 @@ class _ViewerPageState extends State<ViewerPage> {
       backgroundColor: Colors.black,
       appBar: AppBar(
         title: const Text("Shot Analysis"),
-        backgroundColor: Colors.orange,
+
         elevation: 0,
         actions: [],
       ),
@@ -737,7 +737,7 @@ class _ViewerPageState extends State<ViewerPage> {
                           icon: const Icon(Icons.analytics),
                           label: const Text("Analyze Shot"),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orange,
+                            backgroundColor: const Color(0xFF1565C0),
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             textStyle: const TextStyle(
@@ -834,7 +834,7 @@ class _ViewerPageState extends State<ViewerPage> {
                                           }
                                         : null,
                                     icon: const Icon(Icons.arrow_back),
-                                    color: Colors.orange,
+                                    color: const Color(0xFF1565C0),
                                     iconSize: 28,
                                   ),
                                   Column(
@@ -876,7 +876,7 @@ class _ViewerPageState extends State<ViewerPage> {
                                           }
                                         : null,
                                     icon: const Icon(Icons.arrow_forward),
-                                    color: Colors.orange,
+                                    color: const Color(0xFF1565C0),
                                     iconSize: 28,
                                   ),
                                 ],
@@ -1000,18 +1000,16 @@ class _ViewerPageState extends State<ViewerPage> {
                                   .clamp(
                                     0.0,
                                     (_videoPlayerKey
-                                                .currentState
-                                                ?.duration
-                                                .inMilliseconds ??
-                                            1000)
+                                            .currentState
+                                            ?.duration
+                                            .inMilliseconds)!
                                         .toDouble(),
                                   ),
                               max:
                                   (_videoPlayerKey
-                                              .currentState
-                                              ?.duration
-                                              .inMilliseconds ??
-                                          1000)
+                                          .currentState
+                                          ?.duration
+                                          .inMilliseconds)!
                                       .toDouble(),
                               onChanged: (value) {
                                 final newPosition = Duration(
@@ -1019,7 +1017,7 @@ class _ViewerPageState extends State<ViewerPage> {
                                 );
                                 safeSeekTo(newPosition);
                               },
-                              activeColor: Colors.orange,
+                              activeColor: const Color(0xFF1565C0),
                               inactiveColor: Colors.grey,
                             ),
                             Row(
@@ -1062,7 +1060,7 @@ class _ViewerPageState extends State<ViewerPage> {
                               safeSeekTo(newPosition);
                             },
                             icon: const Icon(Icons.replay_10),
-                            color: Colors.orange,
+                            color: const Color(0xFF1565C0),
                             iconSize: 32,
                             tooltip: 'Back 1s',
                           ),
@@ -1072,7 +1070,7 @@ class _ViewerPageState extends State<ViewerPage> {
                               playerState?.pause();
                             },
                             icon: const Icon(Icons.pause),
-                            color: Colors.orange,
+                            color: const Color(0xFF1565C0),
                             iconSize: 40,
                           ),
                           IconButton(
@@ -1081,7 +1079,7 @@ class _ViewerPageState extends State<ViewerPage> {
                               playerState?.play();
                             },
                             icon: const Icon(Icons.play_arrow),
-                            color: Colors.orange,
+                            color: const Color(0xFF1565C0),
                             iconSize: 40,
                           ),
                           IconButton(
@@ -1103,7 +1101,7 @@ class _ViewerPageState extends State<ViewerPage> {
                               safeSeekTo(newPosition);
                             },
                             icon: const Icon(Icons.forward_10),
-                            color: Colors.orange,
+                            color: const Color(0xFF1565C0),
                             iconSize: 32,
                             tooltip: 'Forward 1s',
                           ),
@@ -1112,7 +1110,7 @@ class _ViewerPageState extends State<ViewerPage> {
                               safeSeekTo(Duration.zero);
                             },
                             icon: const Icon(Icons.restart_alt),
-                            color: Colors.orange,
+                            color: const Color(0xFF1565C0),
                             iconSize: 32,
                             tooltip: 'Restart',
                           ),

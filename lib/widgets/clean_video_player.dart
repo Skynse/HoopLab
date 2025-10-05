@@ -36,7 +36,7 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
     _controller = VideoPlayerController.file(File(widget.videoPath));
 
     await _controller.initialize();
-    await _controller.setLooping(false);
+    await _controller.setLooping(true);
 
     if (mounted) {
       setState(() {
@@ -106,7 +106,7 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
       return Container(
         color: Colors.black,
         child: const Center(
-          child: CircularProgressIndicator(color: Colors.orange),
+          child: CircularProgressIndicator(color: const Color(0xFF1565C0)),
         ),
       );
     }

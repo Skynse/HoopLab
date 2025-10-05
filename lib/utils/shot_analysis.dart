@@ -29,19 +29,14 @@ class ShotAnalysisResult {
   });
 }
 
-enum ShotQuality {
-  excellent,
-  good,
-  average,
-  needsWork,
-  poor,
-}
+enum ShotQuality { excellent, good, average, needsWork, poor }
 
 class ShotAnalyzer {
   static const double optimalArcHeight = 11.0; // feet (for free throw distance)
   static const double optimalEntryAngle = 45.0; // degrees
   static const double rimHeight = 10.0; // feet
-  static const double pixelsPerFoot = 30.0; // Rough conversion - adjust based on your video scale
+  static const double pixelsPerFoot =
+      30.0; // Rough conversion - adjust based on your video scale
 
   /// Analyzes a complete shot trajectory and provides feedback
   static ShotAnalysisResult analyzeShotTrajectory({
@@ -58,10 +53,12 @@ class ShotAnalyzer {
 
       if (ballDetections.isNotEmpty) {
         final ball = ballDetections.first;
-        trajectoryPoints.add(TrajectoryPoint(
-          position: Offset(ball.bbox.centerX, ball.bbox.centerY),
-          timestamp: frame.timestamp,
-        ));
+        trajectoryPoints.add(
+          TrajectoryPoint(
+            position: Offset(ball.bbox.centerX, ball.bbox.centerY),
+            timestamp: frame.timestamp,
+          ),
+        );
       }
     }
 
@@ -102,7 +99,12 @@ class ShotAnalyzer {
 
     // Determine shot quality and generate tips
     final quality = _assessShotQuality(arcHeight, entryAngle);
-    final tips = _generateImprovementTips(arcHeight, entryAngle, ballPoints, hoopPosition);
+    final tips = _generateImprovementTips(
+      arcHeight,
+      entryAngle,
+      ballPoints,
+      hoopPosition,
+    );
 
     return ShotAnalysisResult(
       arcHeight: arcHeight,
@@ -136,7 +138,10 @@ class ShotAnalyzer {
   }
 
   /// Calculate the entry angle at which the ball approaches the rim
-  static double _calculateEntryAngle(List<Offset> ballPoints, Offset rimPosition) {
+  static double _calculateEntryAngle(
+    List<Offset> ballPoints,
+    Offset rimPosition,
+  ) {
     if (ballPoints.length < 3) return 0;
 
     // Use the last few points to calculate approach angle
@@ -154,7 +159,10 @@ class ShotAnalyzer {
     final dy = end.dy - start.dy;
 
     // Calculate angle (positive Y is downward)
-    final angleRadians = atan2(dy, dx.abs()); // Use absolute dx for consistent angle measurement
+    final angleRadians = atan2(
+      dy,
+      dx.abs(),
+    ); // Use absolute dx for consistent angle measurement
     final angleDegrees = angleRadians * (180 / pi);
 
     return angleDegrees.clamp(0, 90);
@@ -188,10 +196,12 @@ class ShotAnalyzer {
   static Offset? _findHoopPosition(List<FrameData> frames) {
     for (final frame in frames) {
       final hoopDetections = frame.detections
-          .where((d) =>
-              d.label.toLowerCase().contains('hoop') ||
-              d.label.toLowerCase().contains('rim') ||
-              d.label.toLowerCase().contains('basket'))
+          .where(
+            (d) =>
+                d.label.toLowerCase().contains('hoop') ||
+                d.label.toLowerCase().contains('rim') ||
+                d.label.toLowerCase().contains('basket'),
+          )
           .toList();
 
       if (hoopDetections.isNotEmpty) {
@@ -246,7 +256,9 @@ class ShotAnalyzer {
 
     // Arc height feedback
     if (arcHeight < 8) {
-      tips.add("🔺 Your shot is too flat. Try releasing the ball at a higher angle (45° or more).");
+      tips.add(
+        "🔺 Your shot is too flat. Try releasing the ball at a higher angle (45° or more).",
+      );
       tips.add("💪 Use more leg drive to generate upward momentum.");
     } else if (arcHeight > 15) {
       tips.add("🔻 Your shot is too high. Lower your release angle slightly.");
@@ -257,30 +269,43 @@ class ShotAnalyzer {
 
     // Entry angle feedback
     if (entryAngle < 35) {
-      tips.add("📐 Your entry angle is too flat (${entryAngle.toStringAsFixed(1)}°). Aim for 45°+ for better rim coverage.");
+      tips.add(
+        "📐 Your entry angle is too flat (${entryAngle.toStringAsFixed(1)}°). Aim for 45°+ for better rim coverage.",
+      );
       tips.add("⬆️ Increase your shooting arc to get a steeper entry angle.");
     } else if (entryAngle > 60) {
-      tips.add("📐 Your entry angle is too steep (${entryAngle.toStringAsFixed(1)}°). Try a slightly flatter trajectory.");
+      tips.add(
+        "📐 Your entry angle is too steep (${entryAngle.toStringAsFixed(1)}°). Try a slightly flatter trajectory.",
+      );
     } else {
-      tips.add("✅ Great entry angle (${entryAngle.toStringAsFixed(1)}°)! Perfect rim approach.");
+      tips.add(
+        "✅ Great entry angle (${entryAngle.toStringAsFixed(1)}°)! Perfect rim approach.",
+      );
     }
 
     // Direction feedback (basic left/right analysis)
     final lastPoint = ballPoints.last;
     final horizontalMiss = (lastPoint.dx - hoopPosition.dx).abs();
 
-    if (horizontalMiss > 20) { // Significant miss left or right
+    if (horizontalMiss > 20) {
+      // Significant miss left or right
       if (lastPoint.dx < hoopPosition.dx) {
-        tips.add("⬅️ Shot drifted left. Check your shooting hand alignment and follow-through.");
+        tips.add(
+          "⬅️ Shot drifted left. Check your shooting hand alignment and follow-through.",
+        );
       } else {
-        tips.add("➡️ Shot drifted right. Ensure your elbow is under the ball at release.");
+        tips.add(
+          "➡️ Shot drifted right. Ensure your elbow is under the ball at release.",
+        );
       }
       tips.add("🎯 Focus on keeping your shooting hand square to the rim.");
     }
 
     // If no issues found, provide encouragement
     if (tips.isEmpty || tips.every((tip) => tip.startsWith("✅"))) {
-      tips.add("🏀 Great shot mechanics! Keep practicing to maintain this consistency.");
+      tips.add(
+        "🏀 Great shot mechanics! Keep practicing to maintain this consistency.",
+      );
     }
 
     return tips;
@@ -308,7 +333,8 @@ class ShotAnalyzer {
       // If the ball jumps too far too quickly, it's likely a new shot
       final speed = timeDiff > 0 ? distance / timeDiff : 0;
 
-      if (distance > 150 || speed > 1000) { // Threshold for detecting shot break
+      if (distance > 150 || speed > 1000) {
+        // Threshold for detecting shot break
         // End current segment and start a new one
         if (currentSegment.length > 2) {
           shotSegments.add(List.from(currentSegment));
@@ -353,7 +379,9 @@ class ShotAnalyzer {
       }
     }
 
-    debugPrint('🏀 Detected ${shotSegments.length} shot segments, using segment with ${bestShot.length} points');
+    debugPrint(
+      '🏀 Detected ${shotSegments.length} shot segments, using segment with ${bestShot.length} points',
+    );
     return bestShot;
   }
 
@@ -365,7 +393,7 @@ class ShotAnalyzer {
       case ShotQuality.good:
         return Colors.lightGreen;
       case ShotQuality.average:
-        return Colors.orange;
+        return const Color(0xFF1565C0);
       case ShotQuality.needsWork:
         return Colors.deepOrange;
       case ShotQuality.poor:
