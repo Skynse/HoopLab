@@ -30,6 +30,8 @@ class _ViewerPageState extends State<ViewerPage> {
   // Clean video player
   final GlobalKey<CleanVideoPlayerState> _videoPlayerKey = GlobalKey();
   Duration _currentVideoPosition = Duration.zero;
+  Duration? _sliderSeekPosition; // Track slider position separately
+  Timer? _sliderSeekDebouncer;
   StreamSubscription? analysisSubscription;
   YOLO? yoloModel;
   int totalFramesToProcess = 0;
@@ -337,19 +339,33 @@ class _ViewerPageState extends State<ViewerPage> {
               hoopPosition: hoopPosition,
             );
 
-            // Calculate prediction
+            // Calculate shot accuracy
             final ballTrajectory = currentShotBallPositions;
             if (ballTrajectory.length >= 3) {
-              final willMake = TrajectoryPredictor.willShotGoIn(
-                ballPoints: ballTrajectory,
-                hoopPosition: hoopPosition,
+              // Get hoop bounding box for accuracy calculation
+              final hoopBBox = _getAverageHoopBBox(
+                upFrameIndex,
+                downFrameIndex,
+                null,
               );
-              shot.prediction = willMake ? "MAKE" : "MISS";
+
+              // Calculate accuracy percentage
+              final accuracy =
+                  TrajectoryPredictor.calculateShotAccuracyFromRimCrossing(
+                    ballPoints: ballTrajectory,
+                    hoopPosition: hoopPosition,
+                    hoopBBox: hoopBBox,
+                    hoopRadius: hoopBBox != null ? hoopBBox.width / 2 : 30.0,
+                  );
+              shot.accuracy = accuracy;
+              shot.prediction = accuracy > 50.0
+                  ? "MAKE"
+                  : "MISS"; // Keep for backward compatibility
             }
 
             shots.add(shot);
             debugPrint(
-              '✅ Shot ${shot.id} completed: ${shot.prediction} '
+              '✅ Shot ${shot.id} completed: Accuracy=${shot.accuracy?.toStringAsFixed(1) ?? "N/A"}% '
               '(${currentShotFrames.length} frames)',
             );
           }
@@ -429,7 +445,82 @@ class _ViewerPageState extends State<ViewerPage> {
     return null;
   }
 
-  Timer? _seekDebounceTimer;
+  /// Get average hoop bounding box for a frame range
+  BoundingBox? _getAverageHoopBBox(
+    int startFrame,
+    int endFrame,
+    Map<int, Offset>? hoopMap,
+  ) {
+    double sumX1 = 0, sumY1 = 0, sumX2 = 0, sumY2 = 0;
+    int count = 0;
+
+    final end = endFrame < clip.frames.length
+        ? endFrame
+        : clip.frames.length - 1;
+
+    for (int i = startFrame; i <= end; i++) {
+      final frame = clip.frames[i];
+      final hoopDetections = frame.detections.where(
+        (d) =>
+            d.label.toLowerCase().contains('hoop') ||
+            d.label.toLowerCase().contains('rim') ||
+            d.label.toLowerCase().contains('basket') ||
+            d.label == '3',
+      );
+
+      for (final hoop in hoopDetections) {
+        sumX1 += hoop.bbox.x1;
+        sumY1 += hoop.bbox.y1;
+        sumX2 += hoop.bbox.x2;
+        sumY2 += hoop.bbox.y2;
+        count++;
+      }
+    }
+
+    if (count > 0) {
+      return BoundingBox(
+        x1: sumX1 / count,
+        y1: sumY1 / count,
+        x2: sumX2 / count,
+        y2: sumY2 / count,
+      );
+    }
+
+    return null;
+  }
+
+  /// Check if current shot has ended and auto-advance to next shot
+  void _checkShotAutoAdvance(Duration position) {
+    if (clip.shots.isEmpty ||
+        currentShotIndex < 0 ||
+        currentShotIndex >= clip.shots.length) {
+      return;
+    }
+
+    final currentShot = clip.shots[currentShotIndex];
+    final currentTimeSec = position.inMilliseconds / 1000.0;
+
+    // Check if we've passed the end of the current shot (with small buffer)
+    if (currentTimeSec > currentShot.endTime + 0.5) {
+      // Move to next shot
+      final nextIndex =
+          (currentShotIndex + 1) %
+          clip.shots.length; // Loop back to 0 after last shot
+
+      setState(() {
+        currentShotIndex = nextIndex;
+      });
+
+      // Seek to start of next shot
+      final nextShot = clip.shots[nextIndex];
+      safeSeekTo(Duration(milliseconds: (nextShot.startTime * 1000).round()));
+
+      debugPrint(
+        '🔄 Auto-advanced to shot ${nextIndex + 1}/${clip.shots.length}',
+      );
+    }
+  }
+
   // Safe video seeking using CleanVideoPlayer
   Future<void> safeSeekTo(Duration position) async {
     final playerState = _videoPlayerKey.currentState;
@@ -478,7 +569,7 @@ class _ViewerPageState extends State<ViewerPage> {
   @override
   void dispose() {
     _isCancelled = true; // Cancel any ongoing frame extraction
-    _seekDebounceTimer?.cancel();
+    _sliderSeekDebouncer?.cancel();
     analysisSubscription?.cancel();
     _frameCache.clear();
     super.dispose();
@@ -639,6 +730,9 @@ class _ViewerPageState extends State<ViewerPage> {
         setState(() {
           _currentVideoPosition = position;
         });
+
+        // Auto-advance to next shot when current shot ends
+        _checkShotAutoAdvance(position);
       },
       overlay: overlayFrames.isNotEmpty
           ? TrajectoryOverlay(
@@ -882,68 +976,85 @@ class _ViewerPageState extends State<ViewerPage> {
                                 ],
                               ),
                               const SizedBox(height: 8),
-                              // Current shot prediction
-                              if (clip.shots[currentShotIndex].prediction !=
-                                  null)
+                              // Current shot accuracy display
+                              if (clip.shots[currentShotIndex].accuracy != null)
                                 Container(
-                                  padding: const EdgeInsets.all(12),
+                                  padding: const EdgeInsets.all(16),
                                   decoration: BoxDecoration(
-                                    color:
-                                        clip
-                                                .shots[currentShotIndex]
-                                                .prediction ==
-                                            "MAKE"
-                                        ? Colors.green.withOpacity(0.1)
-                                        : Colors.red.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
-                                      color:
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        Color.lerp(
+                                          Colors.red,
+                                          Colors.green,
                                           clip
                                                   .shots[currentShotIndex]
-                                                  .prediction ==
-                                              "MAKE"
-                                          ? Colors.green
-                                          : Colors.red,
-                                      width: 2,
+                                                  .accuracy! /
+                                              100,
+                                        )!.withValues(alpha: 0.2),
+                                        Color.lerp(
+                                          Colors.red,
+                                          Colors.green,
+                                          clip
+                                                  .shots[currentShotIndex]
+                                                  .accuracy! /
+                                              100,
+                                        )!.withValues(alpha: 0.05),
+                                      ],
+                                    ),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: Color.lerp(
+                                        Colors.red,
+                                        Colors.green,
+                                        clip.shots[currentShotIndex].accuracy! /
+                                            100,
+                                      )!,
+                                      width: 3,
                                     ),
                                   ),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
+                                  child: Column(
                                     children: [
-                                      Icon(
-                                        clip
-                                                    .shots[currentShotIndex]
-                                                    .prediction ==
-                                                "MAKE"
-                                            ? Icons.check_circle
-                                            : Icons.cancel,
-                                        color:
-                                            clip
-                                                    .shots[currentShotIndex]
-                                                    .prediction ==
-                                                "MAKE"
-                                            ? Colors.green
-                                            : Colors.red,
-                                        size: 24,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        clip
-                                                    .shots[currentShotIndex]
-                                                    .prediction ==
-                                                "MAKE"
-                                            ? "WILL GO IN"
-                                            : "WILL MISS",
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                          color:
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.track_changes,
+                                            color: Color.lerp(
+                                              Colors.red,
+                                              Colors.green,
                                               clip
                                                       .shots[currentShotIndex]
-                                                      .prediction ==
-                                                  "MAKE"
-                                              ? Colors.green
-                                              : Colors.red,
+                                                      .accuracy! /
+                                                  100,
+                                            ),
+                                            size: 24,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Shot Accuracy',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.grey[700],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        '${clip.shots[currentShotIndex].accuracy!.toStringAsFixed(1)}%',
+                                        style: TextStyle(
+                                          fontSize: 36,
+                                          fontWeight: FontWeight.bold,
+                                          color: Color.lerp(
+                                            Colors.red,
+                                            Colors.green,
+                                            clip
+                                                    .shots[currentShotIndex]
+                                                    .accuracy! /
+                                                100,
+                                          ),
                                         ),
                                       ),
                                     ],
@@ -995,16 +1106,18 @@ class _ViewerPageState extends State<ViewerPage> {
                         child: Column(
                           children: [
                             Slider(
-                              value: _currentVideoPosition.inMilliseconds
-                                  .toDouble()
-                                  .clamp(
-                                    0.0,
-                                    (_videoPlayerKey
-                                            .currentState
-                                            ?.duration
-                                            .inMilliseconds)!
-                                        .toDouble(),
-                                  ),
+                              value:
+                                  (_sliderSeekPosition ?? _currentVideoPosition)
+                                      .inMilliseconds
+                                      .toDouble()
+                                      .clamp(
+                                        0.0,
+                                        (_videoPlayerKey
+                                                .currentState
+                                                ?.duration
+                                                .inMilliseconds)!
+                                            .toDouble(),
+                                      ),
                               max:
                                   (_videoPlayerKey
                                           .currentState
@@ -1015,7 +1128,35 @@ class _ViewerPageState extends State<ViewerPage> {
                                 final newPosition = Duration(
                                   milliseconds: value.round(),
                                 );
+
+                                // Update slider position immediately for responsive UI
+                                setState(() {
+                                  _sliderSeekPosition = newPosition;
+                                });
+
+                                // Debounce the actual seek to avoid overwhelming video decoder
+                                _sliderSeekDebouncer?.cancel();
+                                _sliderSeekDebouncer = Timer(
+                                  const Duration(milliseconds: 150),
+                                  () {
+                                    safeSeekTo(newPosition);
+                                    setState(() {
+                                      _sliderSeekPosition =
+                                          null; // Clear override
+                                    });
+                                  },
+                                );
+                              },
+                              onChangeEnd: (value) {
+                                // Immediately seek when user releases slider
+                                _sliderSeekDebouncer?.cancel();
+                                final newPosition = Duration(
+                                  milliseconds: value.round(),
+                                );
                                 safeSeekTo(newPosition);
+                                setState(() {
+                                  _sliderSeekPosition = null;
+                                });
                               },
                               activeColor: const Color(0xFF1565C0),
                               inactiveColor: Colors.grey,

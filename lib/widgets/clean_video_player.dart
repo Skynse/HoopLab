@@ -36,7 +36,8 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
     _controller = VideoPlayerController.file(File(widget.videoPath));
 
     await _controller.initialize();
-    await _controller.setLooping(true);
+    // Don't set looping - let parent control playback
+    // await _controller.setLooping(true);
 
     if (mounted) {
       setState(() {
@@ -50,10 +51,18 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
 
       widget.onVideoReady?.call();
 
-      // Listen to position changes
+      // Listen to position changes (throttled to avoid performance issues)
+      Duration? lastReportedPosition;
       _controller.addListener(() {
         if (mounted) {
-          widget.onPositionChanged?.call(_controller.value.position);
+          final currentPos = _controller.value.position;
+          // Only report if position changed by at least 100ms
+          if (lastReportedPosition == null ||
+              (currentPos - lastReportedPosition!).inMilliseconds.abs() >=
+                  100) {
+            lastReportedPosition = currentPos;
+            widget.onPositionChanged?.call(currentPos);
+          }
         }
       });
     }
@@ -67,17 +76,45 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
 
   /// Seek to specific position
   Future<void> seekTo(Duration position) async {
-    await _controller.seekTo(position);
+    if (!_isInitialized) return;
+
+    try {
+      await _controller.seekTo(position);
+      // Force a frame update after seek
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('Seek error: $e');
+    }
   }
 
   /// Play the video
-  void play() {
-    _controller.play();
+  Future<void> play() async {
+    if (!_isInitialized) return;
+
+    try {
+      await _controller.play();
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('Play error: $e');
+    }
   }
 
   /// Pause the video
-  void pause() {
-    _controller.pause();
+  Future<void> pause() async {
+    if (!_isInitialized) return;
+
+    try {
+      await _controller.pause();
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('Pause error: $e');
+    }
   }
 
   /// Get current position

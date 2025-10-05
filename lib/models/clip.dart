@@ -215,7 +215,8 @@ class Shot {
   final List<FrameData> frames;
   final double startTime;
   final double endTime;
-  String? prediction; // "MAKE" or "MISS"
+  String? prediction; // "MAKE" or "MISS" (deprecated - use accuracy instead)
+  double? accuracy; // Shot accuracy percentage (0-100%)
   Offset? hoopPosition;
 
   Shot({
@@ -224,6 +225,7 @@ class Shot {
     required this.startTime,
     required this.endTime,
     this.prediction,
+    this.accuracy,
     this.hoopPosition,
   });
 

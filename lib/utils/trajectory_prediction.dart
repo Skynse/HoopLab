@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:hooplab/models/clip.dart';
 
 class TrajectoryPredictor {
   /// Predict trajectory using linear regression (similar to the GitHub repo approach)
@@ -197,6 +198,75 @@ class TrajectoryPredictor {
     );
 
     return accuracy * 100; // Return as percentage
+  }
+
+  /// Calculate shot accuracy as percentage (0-100%)
+  /// Based on how close the ball crosses the rim to the center
+  static double calculateShotAccuracyFromRimCrossing({
+    required List<Offset> ballPoints,
+    required Offset hoopPosition,
+    BoundingBox? hoopBBox,
+    double hoopRadius = 30.0,
+  }) {
+    // Copy list to avoid modifying original
+    final points = List<Offset>.from(ballPoints);
+
+    // Add interpolated points
+    final int originalLength = points.length;
+    for (int i = 1; i < originalLength; i++) {
+      Offset point1 = points[i - 1];
+      Offset point2 = points[i];
+      Offset inBetween = Offset.lerp(point1, point2, 0.5)!;
+      Offset insertPoint = Offset.lerp(point1, inBetween, 0.5)!;
+      points.insert(i, insertPoint);
+    }
+
+    if (points.length < 3) return 0.0;
+
+    final rimHeight = hoopBBox != null
+        ? hoopBBox.y1
+        : hoopPosition.dy - (hoopRadius * 0.5);
+
+    Offset? pointAboveRim;
+    Offset? pointBelowRim;
+
+    for (int i = points.length - 1; i >= 0; i--) {
+      if (points[i].dy < rimHeight && pointAboveRim == null) {
+        pointAboveRim = points[i];
+        if (i + 1 < points.length) {
+          pointBelowRim = points[i + 1];
+        }
+        break;
+      }
+    }
+
+    if (pointAboveRim == null || pointBelowRim == null) {
+      return 0.0;
+    }
+
+    final x1 = pointAboveRim.dx;
+    final y1 = pointAboveRim.dy;
+    final x2 = pointBelowRim.dx;
+    final y2 = pointBelowRim.dy;
+
+    final predictedX = x1 + (x2 - x1) * (rimHeight - y1) / (y2 - y1);
+
+    // Calculate accuracy based on distance from center
+    final rimCenterX = hoopBBox != null ? hoopBBox.centerX : hoopPosition.dx;
+    final distanceFromCenter = (predictedX - rimCenterX).abs();
+    final rimWidth = hoopBBox != null ? hoopBBox.width : (hoopRadius * 2);
+
+    // Perfect center = 100%, edge = ~0%, outside = negative (clamped to 0)
+    final accuracy = ((1 - (distanceFromCenter / (rimWidth / 2))) * 100).clamp(
+      0.0,
+      100.0,
+    );
+
+    debugPrint(
+      '📊 Shot Accuracy: ${accuracy.toStringAsFixed(1)}% (distance from center: ${distanceFromCenter.toStringAsFixed(1)}px)',
+    );
+
+    return accuracy;
   }
 
   /// Perform linear regression for either X or Y coordinates
