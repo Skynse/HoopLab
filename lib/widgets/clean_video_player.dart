@@ -32,19 +32,18 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
   void initState() {
     super.initState();
     _initializeVideoPlayer();
+  }
+
+  void _initializeVideoPlayer() async {
+    _controller = VideoPlayerController.file(File(widget.videoPath));
+    await _controller.initialize();
+
     _chewieController = ChewieController(
       videoPlayerController: _controller,
       autoPlay: true,
       looping: true,
       aspectRatio: _aspectRatio,
     );
-  }
-
-  void _initializeVideoPlayer() async {
-    _controller = VideoPlayerController.file(File(widget.videoPath))
-      ..initialize().then((_) {
-        setState(() {});
-      });
 
     if (mounted) {
       setState(() {
