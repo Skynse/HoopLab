@@ -38,6 +38,12 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
     _controller = VideoPlayerController.file(File(widget.videoPath));
     await _controller.initialize();
 
+    // Get actual video dimensions for aspect ratio BEFORE creating ChewieController
+    if (_controller.value.size != Size.zero) {
+      _aspectRatio =
+          _controller.value.size.width / _controller.value.size.height;
+    }
+
     _chewieController = ChewieController(
       videoPlayerController: _controller,
       autoPlay: true,
@@ -48,11 +54,6 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
     if (mounted) {
       setState(() {
         _isInitialized = true;
-        // Get actual video dimensions for aspect ratio
-        if (_controller.value.size != Size.zero) {
-          _aspectRatio =
-              _controller.value.size.width / _controller.value.size.height;
-        }
       });
 
       widget.onVideoReady?.call();

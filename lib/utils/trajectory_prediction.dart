@@ -202,7 +202,8 @@ class TrajectoryPredictor {
 
   /// Calculate shot accuracy as percentage (0-100%)
   /// Based on how close the ball crosses the rim to the center
-  static double calculateShotAccuracyFromRimCrossing({
+  /// Returns null if trajectory is too incomplete to analyze
+  static ShotAccuracyResult calculateShotAccuracyFromRimCrossing({
     required List<Offset> ballPoints,
     required Offset hoopPosition,
     BoundingBox? hoopBBox,
@@ -221,7 +222,13 @@ class TrajectoryPredictor {
       points.insert(i, insertPoint);
     }
 
-    if (points.length < 3) return 0.0;
+    if (points.length < 3) {
+      return ShotAccuracyResult(
+        accuracy: 0.0,
+        confidence: ShotConfidence.insufficient,
+        reason: 'Not enough trajectory points',
+      );
+    }
 
     final rimHeight = hoopBBox != null
         ? hoopBBox.y1
@@ -241,7 +248,13 @@ class TrajectoryPredictor {
     }
 
     if (pointAboveRim == null || pointBelowRim == null) {
-      return 0.0;
+      // Try fallback: use closest approach to rim if no crossing detected
+      return _estimateAccuracyFromProximity(
+        points: points,
+        hoopPosition: hoopPosition,
+        hoopBBox: hoopBBox,
+        hoopRadius: hoopRadius,
+      );
     }
 
     final x1 = pointAboveRim.dx;
@@ -262,11 +275,98 @@ class TrajectoryPredictor {
       100.0,
     );
 
+    // Determine confidence based on trajectory completeness
+    final hasFullArc = _hasCompleteArc(points, rimHeight);
+    final confidence = hasFullArc ? ShotConfidence.high : ShotConfidence.medium;
+
     debugPrint(
-      '📊 Shot Accuracy: ${accuracy.toStringAsFixed(1)}% (distance from center: ${distanceFromCenter.toStringAsFixed(1)}px)',
+      '📊 Shot Accuracy: ${accuracy.toStringAsFixed(1)}% '
+      '(confidence: $confidence, distance: ${distanceFromCenter.toStringAsFixed(1)}px)',
     );
 
-    return accuracy;
+    return ShotAccuracyResult(
+      accuracy: accuracy,
+      confidence: confidence,
+      reason: 'Rim crossing detected',
+    );
+  }
+
+  /// Fallback method: estimate accuracy from closest approach to rim
+  /// Used when rim crossing isn't detected (partial trajectory)
+  static ShotAccuracyResult _estimateAccuracyFromProximity({
+    required List<Offset> points,
+    required Offset hoopPosition,
+    BoundingBox? hoopBBox,
+    double hoopRadius = 30.0,
+  }) {
+    // Find closest point to rim
+    double closestDistance = double.infinity;
+    Offset? closestPoint;
+
+    for (final point in points) {
+      final distance = (point - hoopPosition).distance;
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestPoint = point;
+      }
+    }
+
+    if (closestPoint == null) {
+      return ShotAccuracyResult(
+        accuracy: 0.0,
+        confidence: ShotConfidence.insufficient,
+        reason: 'No trajectory data',
+      );
+    }
+
+    final rimWidth = hoopBBox != null ? hoopBBox.width : (hoopRadius * 2);
+
+    // If ball never got close to rim, it's clearly a miss
+    if (closestDistance > rimWidth * 2) {
+      return ShotAccuracyResult(
+        accuracy: 0.0,
+        confidence: ShotConfidence.low,
+        reason:
+            'Ball too far from rim (${closestDistance.toStringAsFixed(0)}px)',
+      );
+    }
+
+    // Estimate accuracy based on proximity
+    // Within rim width = some accuracy, farther = lower
+    final accuracy = ((1 - (closestDistance / (rimWidth * 1.5))) * 100).clamp(
+      0.0,
+      100.0,
+    );
+
+    debugPrint(
+      '⚠️ Partial trajectory - estimated accuracy: ${accuracy.toStringAsFixed(1)}% '
+      '(closest: ${closestDistance.toStringAsFixed(1)}px)',
+    );
+
+    return ShotAccuracyResult(
+      accuracy: accuracy,
+      confidence: ShotConfidence.low,
+      reason: 'Partial trajectory - estimated from proximity',
+    );
+  }
+
+  /// Check if trajectory contains a complete arc (ascent + descent)
+  static bool _hasCompleteArc(List<Offset> points, double rimHeight) {
+    if (points.length < 5) return false;
+
+    bool hasPointsAboveRim = points.any((p) => p.dy < rimHeight);
+    bool hasPointsBelowRim = points.any((p) => p.dy > rimHeight);
+
+    // Check for ascending phase (Y decreasing)
+    bool hasAscent = false;
+    for (int i = 1; i < points.length; i++) {
+      if (points[i].dy < points[i - 1].dy) {
+        hasAscent = true;
+        break;
+      }
+    }
+
+    return hasPointsAboveRim && hasPointsBelowRim && hasAscent;
   }
 
   /// Perform linear regression for either X or Y coordinates
@@ -305,4 +405,26 @@ class LinearRegressionResult {
   final double intercept;
 
   LinearRegressionResult({required this.slope, required this.intercept});
+}
+
+enum ShotConfidence {
+  high, // Complete trajectory with rim crossing
+  medium, // Partial trajectory with rim crossing
+  low, // Estimated from proximity only
+  insufficient, // Not enough data
+}
+
+class ShotAccuracyResult {
+  final double accuracy; // 0-100%
+  final ShotConfidence confidence; // How reliable is this measurement
+  final String reason; // Why this confidence level
+
+  ShotAccuracyResult({
+    required this.accuracy,
+    required this.confidence,
+    required this.reason,
+  });
+
+  bool get isReliable =>
+      confidence == ShotConfidence.high || confidence == ShotConfidence.medium;
 }

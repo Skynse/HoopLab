@@ -110,7 +110,9 @@ class _ViewerPageState extends State<ViewerPage> {
       // Update progress
       if (mounted) {
         setState(() {
-          analysisStatus = 'Extracting frames using ProVideoEditor...';
+          analysisStatus = 'Extracting frames...';
+          totalFramesToProcess = totalFramesToExtract;
+          framesProcessed = 0;
         });
       }
 
@@ -141,6 +143,13 @@ class _ViewerPageState extends State<ViewerPage> {
       }
 
       debugPrint('🎉 Successfully extracted ${thumbnailList.length} frames');
+
+      // Update total frames to actual count
+      if (mounted) {
+        setState(() {
+          totalFramesToProcess = thumbnailList.length;
+        });
+      }
 
       // Create temporary directory for frames
       final framesDir = Directory.systemTemp.createTempSync('hooplab_frames');
@@ -185,6 +194,7 @@ class _ViewerPageState extends State<ViewerPage> {
             setState(() {
               analysisStatus =
                   'Extracting frames... ${i + 1}/$totalFramesToExtract';
+              framesProcessed = i + 1;
             });
           }
         } catch (e) {
@@ -350,17 +360,24 @@ class _ViewerPageState extends State<ViewerPage> {
               );
 
               // Calculate accuracy percentage
-              final accuracy =
+              final accuracyResult =
                   TrajectoryPredictor.calculateShotAccuracyFromRimCrossing(
                     ballPoints: ballTrajectory,
                     hoopPosition: hoopPosition,
                     hoopBBox: hoopBBox,
                     hoopRadius: hoopBBox != null ? hoopBBox.width / 2 : 30.0,
                   );
-              shot.accuracy = accuracy;
-              shot.prediction = accuracy > 50.0
+              shot.accuracy = accuracyResult.accuracy;
+              shot.prediction = accuracyResult.accuracy > 50.0
                   ? "MAKE"
                   : "MISS"; // Keep for backward compatibility
+
+              // Log confidence level
+              if (accuracyResult.confidence != ShotConfidence.high) {
+                debugPrint(
+                  '⚠️ Shot ${shot.id} has ${accuracyResult.confidence} confidence: ${accuracyResult.reason}',
+                );
+              }
             }
 
             shots.add(shot);
@@ -634,7 +651,12 @@ class _ViewerPageState extends State<ViewerPage> {
         // Use the direct path from frame info
         final framePath = frameInfo['path'] as String;
         final frameBytes = File(framePath).readAsBytesSync();
-        totalFramesToProcess = frameResponse['extracted_frames'];
+
+        // Set total frames on first iteration and reset progress counter
+        if (idx == 0) {
+          totalFramesToProcess = frameResponse['extracted_frames'];
+          framesProcessed = 0;
+        }
 
         final results = await yoloModel!.predict(
           frameBytes,
@@ -813,9 +835,11 @@ class _ViewerPageState extends State<ViewerPage> {
                                   setState(() {
                                     clip.frames.add(frameData);
                                     _frameCache.buildCache(clip.frames);
-                                    framesProcessed++;
+                                    // framesProcessed already incremented in analyzeVideoFrames()
                                     totalDetections +=
                                         frameData.detections.length;
+                                    analysisStatus =
+                                        'Analyzing... $framesProcessed/$totalFramesToProcess';
                                   });
                                 }
                               },
@@ -1285,22 +1309,42 @@ class _ViewerPageState extends State<ViewerPage> {
           if (isAnalyzing || isUploading)
             Container(
               color: Colors.black54,
-              child: const Center(
+              child: Center(
                 child: Card(
-                  margin: EdgeInsets.all(32),
+                  margin: const EdgeInsets.all(32),
                   child: Padding(
-                    padding: EdgeInsets.all(24),
+                    padding: const EdgeInsets.all(24),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 16),
+                        // Show linear progress bar if we have total frames
+                        if (totalFramesToProcess > 0) ...[
+                          SizedBox(
+                            width: 200,
+                            child: LinearProgressIndicator(
+                              value: framesProcessed / totalFramesToProcess,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            '$framesProcessed / $totalFramesToProcess frames',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                        ] else
+                          const CircularProgressIndicator(),
+                        const SizedBox(height: 16),
                         Text(
-                          'Extracting and analyzing frames...',
-                          style: TextStyle(
+                          analysisStatus.isNotEmpty
+                              ? analysisStatus
+                              : 'Extracting and analyzing frames...',
+                          style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                           ),
+                          textAlign: TextAlign.center,
                         ),
                       ],
                     ),
