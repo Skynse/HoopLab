@@ -68,7 +68,11 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
               (currentPos - lastReportedPosition!).inMilliseconds.abs() >=
                   100) {
             lastReportedPosition = currentPos;
-            widget.onPositionChanged?.call(currentPos);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                widget.onPositionChanged?.call(currentPos);
+              }
+            });
           }
         }
       });
