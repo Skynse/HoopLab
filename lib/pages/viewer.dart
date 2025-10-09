@@ -11,6 +11,7 @@ import 'package:ultralytics_yolo/ultralytics_yolo.dart';
 import 'package:pro_video_editor/pro_video_editor.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 
 import 'package:path/path.dart' as p;
@@ -99,15 +100,45 @@ class _ViewerPageState extends State<ViewerPage> {
         '📊 Video metadata: ${videoWidth}x${videoHeight}, ${videoDurationSeconds}s',
       );
 
-      // Calculate frame extraction parameters
+      // Get video FPS using FFprobe
+      debugPrint('📊 Getting video FPS with FFprobe...');
+      final probeSession = await FFprobeKit.getMediaInformation(
+        widget.videoPath!,
+      );
+      final mediaInfo = await probeSession.getMediaInformation();
+
+      // Extract FPS from media info
+      double videoFPS = 30.0; // Default fallback
+      if (mediaInfo != null) {
+        final streams = mediaInfo.getStreams();
+        for (final stream in streams) {
+          final streamType = stream.getType();
+          if (streamType == 'video') {
+            final fpsString = stream.getAverageFrameRate();
+            if (fpsString != null && fpsString.isNotEmpty) {
+              // FPS comes as fraction like "30000/1001" or "30/1"
+              final parts = fpsString.split('/');
+              if (parts.length == 2) {
+                final num = double.tryParse(parts[0]) ?? 30.0;
+                final den = double.tryParse(parts[1]) ?? 1.0;
+                videoFPS = num / den;
+              }
+            }
+            break;
+          }
+        }
+      }
+
+      debugPrint('🎬 Video native FPS: ${videoFPS.toStringAsFixed(2)}');
+
+      // Calculate frame extraction parameters using native FPS
       final videoDurationMs = metadata.duration.inMilliseconds;
-      final targetFPS =
-          15.0; // Extract 15 frames per second for smoother analysis
+      final targetFPS = videoFPS; // Use native FPS for perfect frame extraction
       final totalFramesToExtract = (videoDurationSeconds * targetFPS).ceil();
       final segmentDuration = videoDurationMs / totalFramesToExtract;
 
       debugPrint(
-        '🎯 Extracting $totalFramesToExtract frames at ${targetFPS}fps interval (${segmentDuration.toStringAsFixed(1)}ms apart)',
+        '🎯 Extracting $totalFramesToExtract frames at native ${targetFPS.toStringAsFixed(2)}fps',
       );
 
       // Update progress
