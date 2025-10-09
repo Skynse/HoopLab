@@ -731,12 +731,18 @@ class _ViewerPageState extends State<ViewerPage> {
       videoPath: widget.videoPath!,
       onPositionChanged: (position) {
         if (!mounted) return;
-        setState(() {
-          _currentVideoPosition = position;
-        });
 
-        // Auto-advance to next shot when current shot ends
-        _checkShotAutoAdvance(position);
+        // Schedule the setState call for the next frame to avoid calling during build
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() {
+              _currentVideoPosition = position;
+            });
+
+            // Auto-advance to next shot when current shot ends
+            _checkShotAutoAdvance(position);
+          }
+        });
       },
       overlay: overlayFrames.isNotEmpty
           ? TrajectoryOverlay(
