@@ -212,6 +212,97 @@ class ShotAnalyzer {
     return null;
   }
 
+  /// Find all hoop positions detected in frames
+  static List<Offset> findAllHoops(List<FrameData> frames) {
+    final Map<String, Offset> uniqueHoops = {};
+
+    for (final frame in frames) {
+      final hoopDetections = frame.detections
+          .where(
+            (d) =>
+                d.label.toLowerCase().contains('hoop') ||
+                d.label.toLowerCase().contains('rim') ||
+                d.label.toLowerCase().contains('basket'),
+          )
+          .toList();
+
+      for (final hoop in hoopDetections) {
+        final position = Offset(hoop.bbox.centerX, hoop.bbox.centerY);
+
+        // Cluster nearby hoops (same hoop across frames)
+        bool isSameAsExisting = false;
+        for (final existingPos in uniqueHoops.values) {
+          if ((position - existingPos).distance < 100) {
+            // Within 100px = same hoop
+            isSameAsExisting = true;
+            break;
+          }
+        }
+
+        if (!isSameAsExisting) {
+          uniqueHoops['hoop_${uniqueHoops.length}'] = position;
+        }
+      }
+    }
+
+    return uniqueHoops.values.toList();
+  }
+
+  /// Filter ball trajectory to only include points near the target hoop
+  static List<FrameData> filterFramesByHoopROI(
+    List<FrameData> frames,
+    Offset targetHoop,
+    double roiRadius,
+  ) {
+    return frames.where((frame) {
+      final ballDetections = frame.detections
+          .where((d) => d.label.toLowerCase().contains('ball'))
+          .toList();
+
+      if (ballDetections.isEmpty) return false;
+
+      final ball = ballDetections.first;
+      final ballPosition = Offset(ball.bbox.centerX, ball.bbox.centerY);
+
+      // Check if ball is within ROI of target hoop
+      return (ballPosition - targetHoop).distance <= roiRadius;
+    }).toList();
+  }
+
+  /// Determine which hoop a trajectory is targeting based on proximity
+  static Offset? selectTargetHoop(
+    List<Offset> allHoops,
+    List<FrameData> trajectoryFrames,
+  ) {
+    if (allHoops.isEmpty || trajectoryFrames.isEmpty) return null;
+    if (allHoops.length == 1) return allHoops.first;
+
+    // Find which hoop the ball gets closest to
+    double minDistance = double.infinity;
+    Offset? targetHoop;
+
+    for (final hoopPos in allHoops) {
+      for (final frame in trajectoryFrames) {
+        final ballDetections = frame.detections
+            .where((d) => d.label.toLowerCase().contains('ball'))
+            .toList();
+
+        if (ballDetections.isNotEmpty) {
+          final ball = ballDetections.first;
+          final ballPos = Offset(ball.bbox.centerX, ball.bbox.centerY);
+          final distance = (ballPos - hoopPos).distance;
+
+          if (distance < minDistance) {
+            minDistance = distance;
+            targetHoop = hoopPos;
+          }
+        }
+      }
+    }
+
+    return targetHoop;
+  }
+
   /// Assess overall shot quality based on metrics
   static ShotQuality _assessShotQuality(double arcHeight, double entryAngle) {
     int score = 0;
