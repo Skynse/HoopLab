@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:hooplab/pages/camera.dart';
+import 'package:hooplab/pages/live_shot_detector.dart';
 import 'package:hooplab/pages/viewer.dart' as viewer;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -224,7 +225,59 @@ class _MethodSelectorState extends State<MethodSelector>
                   ),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 48),
+                const SizedBox(height: 24),
+                // Recording Tips Card
+                Card(
+                  elevation: 1,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.lightbulb_outline,
+                              color: colorScheme.primary,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Tips for Best Results',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                color: colorScheme.primary,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        _buildTip(
+                          '📹',
+                          'Keep camera steady (use tripod if possible)',
+                        ),
+                        const SizedBox(height: 6),
+                        _buildTip(
+                          '🏀',
+                          'Capture full shot: release → peak → rim',
+                        ),
+                        const SizedBox(height: 6),
+                        _buildTip(
+                          '💡',
+                          'Good lighting - avoid shadows on ball',
+                        ),
+                        const SizedBox(height: 6),
+                        _buildTip('🎯', 'Keep hoop fully visible in frame'),
+                        const SizedBox(height: 6),
+                        _buildTip(
+                          '📏',
+                          'Film from side angle (45°) for best tracking',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 32),
 
                 // Responsive layout
                 LayoutBuilder(
@@ -235,6 +288,8 @@ class _MethodSelectorState extends State<MethodSelector>
                       return Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
+                          Expanded(child: _buildLiveDetectionButton(theme)),
+                          const SizedBox(width: _buttonSpacing),
                           Expanded(child: _buildCameraButton(theme)),
                           const SizedBox(width: _buttonSpacing),
                           Expanded(child: _buildGalleryButton(theme)),
@@ -243,6 +298,8 @@ class _MethodSelectorState extends State<MethodSelector>
                     } else {
                       return Column(
                         children: [
+                          _buildLiveDetectionButton(theme),
+                          const SizedBox(height: _buttonSpacing),
                           _buildCameraButton(theme),
                           const SizedBox(height: _buttonSpacing),
                           _buildGalleryButton(theme),
@@ -268,6 +325,39 @@ class _MethodSelectorState extends State<MethodSelector>
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildTip(String emoji, String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(emoji, style: const TextStyle(fontSize: 16)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(text, style: const TextStyle(fontSize: 13, height: 1.3)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLiveDetectionButton(ThemeData theme) {
+    return _MethodButton(
+      title: 'Live Detection',
+      subtitle: 'Real-time shot analysis',
+      icon: Icons.videocam,
+      onPressed: _isLoading
+          ? null
+          : () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const LiveShotDetector(),
+                ),
+              );
+            },
+      color: const Color(0xFF00C853), // Green for live
+      isLoading: _isLoading,
     );
   }
 
