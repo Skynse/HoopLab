@@ -192,8 +192,10 @@ class ShotAnalyzer {
     return closestPoint;
   }
 
-  /// Find hoop position from frame detections
+  /// Find hoop position from frame detections (average across all frames)
   static Offset? _findHoopPosition(List<FrameData> frames) {
+    final hoopPositions = <Offset>[];
+
     for (final frame in frames) {
       final hoopDetections = frame.detections
           .where(
@@ -206,10 +208,85 @@ class ShotAnalyzer {
 
       if (hoopDetections.isNotEmpty) {
         final hoop = hoopDetections.first;
-        return Offset(hoop.bbox.centerX, hoop.bbox.centerY);
+        hoopPositions.add(Offset(hoop.bbox.centerX, hoop.bbox.centerY));
       }
     }
-    return null;
+
+    if (hoopPositions.isEmpty) return null;
+
+    // Average position across all frames (works for mostly static hoops)
+    double avgX =
+        hoopPositions.map((p) => p.dx).reduce((a, b) => a + b) /
+        hoopPositions.length;
+    double avgY =
+        hoopPositions.map((p) => p.dy).reduce((a, b) => a + b) /
+        hoopPositions.length;
+
+    return Offset(avgX, avgY);
+  }
+
+  /// Get hoop position at a specific frame (for moving camera/hoop)
+  static Offset? getHoopPositionAtFrame(FrameData frame) {
+    final hoopDetections = frame.detections
+        .where(
+          (d) =>
+              d.label.toLowerCase().contains('hoop') ||
+              d.label.toLowerCase().contains('rim') ||
+              d.label.toLowerCase().contains('basket'),
+        )
+        .toList();
+
+    if (hoopDetections.isEmpty) return null;
+
+    final hoop = hoopDetections.first;
+    return Offset(hoop.bbox.centerX, hoop.bbox.centerY);
+  }
+
+  /// Get hoop position interpolated for a specific timestamp (for moving camera)
+  static Offset? getHoopPositionAtTime(
+    List<FrameData> frames,
+    double timestamp,
+  ) {
+    if (frames.isEmpty) return null;
+
+    // Find frames before and after the timestamp
+    FrameData? beforeFrame;
+    FrameData? afterFrame;
+
+    for (int i = 0; i < frames.length; i++) {
+      if (frames[i].timestamp <= timestamp) {
+        beforeFrame = frames[i];
+      }
+      if (frames[i].timestamp >= timestamp && afterFrame == null) {
+        afterFrame = frames[i];
+        break;
+      }
+    }
+
+    final beforeHoop = beforeFrame != null
+        ? getHoopPositionAtFrame(beforeFrame)
+        : null;
+    final afterHoop = afterFrame != null
+        ? getHoopPositionAtFrame(afterFrame)
+        : null;
+
+    // If we have both, interpolate
+    if (beforeHoop != null &&
+        afterHoop != null &&
+        beforeFrame != null &&
+        afterFrame != null) {
+      if (beforeFrame.timestamp == afterFrame.timestamp) {
+        return beforeHoop;
+      }
+
+      final t =
+          (timestamp - beforeFrame.timestamp) /
+          (afterFrame.timestamp - beforeFrame.timestamp);
+      return Offset.lerp(beforeHoop, afterHoop, t.clamp(0.0, 1.0))!;
+    }
+
+    // Otherwise, use whichever we have
+    return beforeHoop ?? afterHoop;
   }
 
   /// Find all hoop positions detected in frames

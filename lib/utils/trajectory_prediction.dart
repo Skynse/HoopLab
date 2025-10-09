@@ -202,12 +202,13 @@ class TrajectoryPredictor {
 
   /// Calculate shot accuracy as percentage (0-100%)
   /// Based on how close the ball crosses the rim to the center
-  /// Returns null if trajectory is too incomplete to analyze
+  /// Supports dynamic hoop tracking for moving cameras
   static ShotAccuracyResult calculateShotAccuracyFromRimCrossing({
     required List<Offset> ballPoints,
     required Offset hoopPosition,
     BoundingBox? hoopBBox,
     double hoopRadius = 30.0,
+    List<FrameData>? frames, // Optional: for dynamic hoop tracking
   }) {
     // Copy list to avoid modifying original
     final points = List<Offset>.from(ballPoints);
@@ -230,16 +231,47 @@ class TrajectoryPredictor {
       );
     }
 
+    // Use dynamic hoop tracking if frames are provided
+    Offset activeHoopPosition = hoopPosition;
+    BoundingBox? activeHoopBBox = hoopBBox;
+
+    if (frames != null && frames.isNotEmpty) {
+      // Find the frame where rim crossing occurs
+      // We'll update hoop position dynamically as we search
+      debugPrint(
+        '🎯 Using dynamic hoop tracking across ${frames.length} frames',
+      );
+    }
+
     final rimHeight = hoopBBox != null
         ? hoopBBox.y1
         : hoopPosition.dy - (hoopRadius * 0.5);
 
     Offset? pointAboveRim;
     Offset? pointBelowRim;
+    int? crossingFrameIndex;
 
     for (int i = points.length - 1; i >= 0; i--) {
-      if (points[i].dy < rimHeight && pointAboveRim == null) {
+      // Update hoop position for this frame if using dynamic tracking
+      if (frames != null && i < frames.length) {
+        final frameHoop = _getHoopFromFrame(frames[i]);
+        if (frameHoop != null) {
+          activeHoopPosition = frameHoop;
+          // Recalculate rim height for this frame's hoop position
+          final frameHoopBBox = _getHoopBBoxFromFrame(frames[i]);
+          if (frameHoopBBox != null) {
+            activeHoopBBox = frameHoopBBox;
+          }
+        }
+      }
+
+      final currentRimHeight = activeHoopBBox != null
+          ? activeHoopBBox.y1
+          : activeHoopPosition.dy - (hoopRadius * 0.5);
+
+      if (points[i].dy < currentRimHeight && pointAboveRim == null) {
         pointAboveRim = points[i];
+        crossingFrameIndex = i;
         if (i + 1 < points.length) {
           pointBelowRim = points[i + 1];
         }
@@ -265,9 +297,20 @@ class TrajectoryPredictor {
     final predictedX = x1 + (x2 - x1) * (rimHeight - y1) / (y2 - y1);
 
     // Calculate accuracy based on distance from center
-    final rimCenterX = hoopBBox != null ? hoopBBox.centerX : hoopPosition.dx;
+    // Use the active hoop position at the crossing frame
+    final rimCenterX = activeHoopBBox != null
+        ? activeHoopBBox.centerX
+        : activeHoopPosition.dx;
     final distanceFromCenter = (predictedX - rimCenterX).abs();
-    final rimWidth = hoopBBox != null ? hoopBBox.width : (hoopRadius * 2);
+    final rimWidth = activeHoopBBox != null
+        ? activeHoopBBox.width
+        : (hoopRadius * 2);
+
+    if (frames != null) {
+      debugPrint(
+        '📍 Rim crossing at frame $crossingFrameIndex - hoop at (${activeHoopPosition.dx.toStringAsFixed(1)}, ${activeHoopPosition.dy.toStringAsFixed(1)})',
+      );
+    }
 
     // Perfect center = 100%, edge = ~0%, outside = negative (clamped to 0)
     final accuracy = ((1 - (distanceFromCenter / (rimWidth / 2))) * 100).clamp(
@@ -367,6 +410,39 @@ class TrajectoryPredictor {
     }
 
     return hasPointsAboveRim && hasPointsBelowRim && hasAscent;
+  }
+
+  /// Get hoop position from a single frame
+  static Offset? _getHoopFromFrame(FrameData frame) {
+    final hoopDetections = frame.detections
+        .where(
+          (d) =>
+              d.label.toLowerCase().contains('hoop') ||
+              d.label.toLowerCase().contains('rim') ||
+              d.label.toLowerCase().contains('basket'),
+        )
+        .toList();
+
+    if (hoopDetections.isEmpty) return null;
+
+    final hoop = hoopDetections.first;
+    return Offset(hoop.bbox.centerX, hoop.bbox.centerY);
+  }
+
+  /// Get hoop bounding box from a single frame
+  static BoundingBox? _getHoopBBoxFromFrame(FrameData frame) {
+    final hoopDetections = frame.detections
+        .where(
+          (d) =>
+              d.label.toLowerCase().contains('hoop') ||
+              d.label.toLowerCase().contains('rim') ||
+              d.label.toLowerCase().contains('basket'),
+        )
+        .toList();
+
+    if (hoopDetections.isEmpty) return null;
+
+    return hoopDetections.first.bbox;
   }
 
   /// Perform linear regression for either X or Y coordinates

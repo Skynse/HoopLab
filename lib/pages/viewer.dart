@@ -359,13 +359,14 @@ class _ViewerPageState extends State<ViewerPage> {
                 null,
               );
 
-              // Calculate accuracy percentage
+              // Calculate accuracy percentage with dynamic hoop tracking
               final accuracyResult =
                   TrajectoryPredictor.calculateShotAccuracyFromRimCrossing(
                     ballPoints: ballTrajectory,
                     hoopPosition: hoopPosition,
                     hoopBBox: hoopBBox,
                     hoopRadius: hoopBBox != null ? hoopBBox.width / 2 : 30.0,
+                    frames: currentShotFrames, // Enable dynamic hoop tracking
                   );
               shot.accuracy = accuracyResult.accuracy;
               shot.prediction = accuracyResult.accuracy > 50.0
@@ -660,7 +661,7 @@ class _ViewerPageState extends State<ViewerPage> {
 
         final results = await yoloModel!.predict(
           frameBytes,
-          confidenceThreshold: 0.67,
+          confidenceThreshold: 0.5,
         );
 
         // Parse detections from YOLO results

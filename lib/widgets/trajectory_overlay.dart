@@ -112,6 +112,8 @@ class TrajectoryPainter extends CustomPainter {
       );
       _drawHoop(canvas, scaledHoop);
 
+      // Hoop position now updates dynamically with camera movement
+
       // Draw prediction
       _drawPrediction(
         canvas,
@@ -200,37 +202,105 @@ class TrajectoryPainter extends CustomPainter {
     );
   }
 
-  /// Find hoop position from detections
+  /// Find hoop position from detections at current video time
+  /// Falls back to nearest hoop detection if not found at exact time
   Offset? _findHoopPosition() {
-    for (final frame in frames) {
-      final hoopDetections = frame.detections
-          .where(
-            (d) =>
-                d.label.toLowerCase().contains('hoop') ||
-                d.label.toLowerCase().contains('rim') ||
-                d.label.toLowerCase().contains('basket'),
-          )
-          .toList();
+    final currentTimeMs = currentVideoPosition.inMilliseconds.toDouble();
 
-      if (hoopDetections.isNotEmpty) {
-        final hoop = hoopDetections.first;
-        // Bounding box coordinates are already in pixel coordinates (not normalized)
-        final videoX = hoop.bbox.centerX;
-        final videoY = hoop.bbox.centerY;
-        return Offset(videoX, videoY);
+    // First, try to find hoop in frames near current time
+    FrameData? frameWithHoop;
+    double minTimeDiff = double.infinity;
+
+    for (final frame in frames) {
+      final frameTimeMs = frame.timestamp * 1000;
+
+      // Only consider frames up to current time (already played)
+      if (frameTimeMs > currentTimeMs) break;
+
+      final hasHoop = frame.detections.any(
+        (d) =>
+            d.label.toLowerCase().contains('hoop') ||
+            d.label.toLowerCase().contains('rim') ||
+            d.label.toLowerCase().contains('basket'),
+      );
+
+      if (hasHoop) {
+        final timeDiff = (frameTimeMs - currentTimeMs).abs();
+        if (timeDiff < minTimeDiff) {
+          minTimeDiff = timeDiff;
+          frameWithHoop = frame;
+        }
       }
     }
+
+    if (frameWithHoop == null) return null;
+
+    final hoopDetections = frameWithHoop.detections
+        .where(
+          (d) =>
+              d.label.toLowerCase().contains('hoop') ||
+              d.label.toLowerCase().contains('rim') ||
+              d.label.toLowerCase().contains('basket'),
+        )
+        .toList();
+
+    if (hoopDetections.isNotEmpty) {
+      final hoop = hoopDetections.first;
+      return Offset(hoop.bbox.centerX, hoop.bbox.centerY);
+    }
+
+    return null;
+  }
+
+  /// Get hoop bounding box at current video time
+  BoundingBox? _findHoopBBox() {
+    final currentTimeMs = currentVideoPosition.inMilliseconds.toDouble();
+
+    FrameData? closestFrame;
+    double minTimeDiff = double.infinity;
+
+    for (final frame in frames) {
+      final frameTimeMs = frame.timestamp * 1000;
+      final timeDiff = (frameTimeMs - currentTimeMs).abs();
+
+      if (timeDiff < minTimeDiff) {
+        minTimeDiff = timeDiff;
+        closestFrame = frame;
+      }
+
+      if (frameTimeMs > currentTimeMs + 100) break;
+    }
+
+    if (closestFrame == null) return null;
+
+    final hoopDetections = closestFrame.detections
+        .where(
+          (d) =>
+              d.label.toLowerCase().contains('hoop') ||
+              d.label.toLowerCase().contains('rim') ||
+              d.label.toLowerCase().contains('basket'),
+        )
+        .toList();
+
+    if (hoopDetections.isNotEmpty) {
+      return hoopDetections.first.bbox;
+    }
+
     return null;
   }
 
   /// Draw hoop
   void _drawHoop(Canvas canvas, Offset position) {
+    // Get actual hoop size if available
+    final hoopBBox = _findHoopBBox();
+    final hoopRadius = hoopBBox != null ? (hoopBBox.width / 2) : 25.0;
+
     // Hoop rim
     final hoopPaint = Paint()
       ..color = Colors.red
       ..strokeWidth = 4
       ..style = PaintingStyle.stroke;
-    canvas.drawCircle(position, 25, hoopPaint);
+    canvas.drawCircle(position, hoopRadius, hoopPaint);
 
     // Hoop center dot
     final centerPaint = Paint()
