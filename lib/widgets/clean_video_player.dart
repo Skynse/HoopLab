@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
 
 class CleanVideoPlayer extends StatefulWidget {
   final String videoPath;
@@ -23,6 +24,7 @@ class CleanVideoPlayer extends StatefulWidget {
 
 class CleanVideoPlayerState extends State<CleanVideoPlayer> {
   late VideoPlayerController _controller;
+  late ChewieController _chewieController;
   bool _isInitialized = false;
   double _aspectRatio = 16 / 9; // Default aspect ratio
 
@@ -30,14 +32,19 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
   void initState() {
     super.initState();
     _initializeVideoPlayer();
+    _chewieController = ChewieController(
+      videoPlayerController: _controller,
+      autoPlay: true,
+      looping: true,
+      aspectRatio: _aspectRatio,
+    );
   }
 
   void _initializeVideoPlayer() async {
-    _controller = VideoPlayerController.file(File(widget.videoPath));
-
-    await _controller.initialize();
-    // Don't set looping - let parent control playback
-    // await _controller.setLooping(true);
+    _controller = VideoPlayerController.file(File(widget.videoPath))
+      ..initialize().then((_) {
+        setState(() {});
+      });
 
     if (mounted) {
       setState(() {
@@ -71,6 +78,7 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
   @override
   void dispose() {
     _controller.dispose();
+    _chewieController.dispose();
     super.dispose();
   }
 
@@ -79,7 +87,7 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
     if (!_isInitialized) return;
 
     try {
-      await _controller.seekTo(position);
+      await _chewieController.seekTo(position);
       // Force a frame update after seek
       if (mounted) {
         setState(() {});
@@ -94,7 +102,7 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
     if (!_isInitialized) return;
 
     try {
-      await _controller.play();
+      await _chewieController.play();
       if (mounted) {
         setState(() {});
       }
@@ -108,7 +116,7 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
     if (!_isInitialized) return;
 
     try {
-      await _controller.pause();
+      await _chewieController.pause();
       if (mounted) {
         setState(() {});
       }
@@ -143,7 +151,7 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
       return Container(
         color: Colors.black,
         child: const Center(
-          child: CircularProgressIndicator(color: const Color(0xFF1565C0)),
+          child: CircularProgressIndicator(color: Color(0xFF1565C0)),
         ),
       );
     }
@@ -159,7 +167,7 @@ class CleanVideoPlayerState extends State<CleanVideoPlayer> {
               return Stack(
                 children: [
                   // Video player - will rebuild when controller value changes
-                  VideoPlayer(_controller),
+                  Chewie(controller: _chewieController),
 
                   // Custom overlay (for trajectory, etc.)
                   if (widget.overlay != null)

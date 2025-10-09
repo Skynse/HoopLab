@@ -513,7 +513,10 @@ class _ViewerPageState extends State<ViewerPage> {
 
       // Seek to start of next shot
       final nextShot = clip.shots[nextIndex];
-      safeSeekTo(Duration(milliseconds: (nextShot.startTime * 1000).round()));
+      //safeSeekTo(Duration(milliseconds: (nextShot.startTime * 1000).round()));
+      _videoPlayerKey.currentState?.seekTo(
+        Duration(milliseconds: (nextShot.startTime * 1000).round()),
+      );
 
       debugPrint(
         '🔄 Auto-advanced to shot ${nextIndex + 1}/${clip.shots.length}',
@@ -522,19 +525,19 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   // Safe video seeking using CleanVideoPlayer
-  Future<void> safeSeekTo(Duration position) async {
-    final playerState = _videoPlayerKey.currentState;
-    if (playerState != null) {
-      try {
-        await playerState.seekTo(position);
-        debugPrint('✅ Seeked to ${position.inSeconds}s');
-      } catch (e) {
-        debugPrint('❌ Seek error: $e');
-      }
-    } else {
-      debugPrint('❌ Cannot seek: video player not available');
-    }
-  }
+  // Future<void> safeSeekTo(Duration position) async {
+  //   final playerState = _videoPlayerKey.currentState;
+  //   if (playerState != null) {
+  //     try {
+  //       await playerState.seekTo(position);
+  //       debugPrint('✅ Seeked to ${position.inSeconds}s');
+  //     } catch (e) {
+  //       debugPrint('❌ Seek error: $e');
+  //     }
+  //   } else {
+  //     debugPrint('❌ Cannot seek: video player not available');
+  //   }
+  // }
 
   void initializeClip() {
     clip = Clip(
@@ -635,7 +638,7 @@ class _ViewerPageState extends State<ViewerPage> {
 
         final results = await yoloModel!.predict(
           frameBytes,
-          confidenceThreshold: 0.5,
+          confidenceThreshold: 0.67,
         );
 
         // Parse detections from YOLO results
@@ -914,7 +917,7 @@ class _ViewerPageState extends State<ViewerPage> {
                                             setState(() {
                                               currentShotIndex--;
                                               // Seek to shot start
-                                              safeSeekTo(
+                                              _videoPlayerKey.currentState?.seekTo(
                                                 Duration(
                                                   milliseconds:
                                                       (clip
@@ -956,7 +959,7 @@ class _ViewerPageState extends State<ViewerPage> {
                                             setState(() {
                                               currentShotIndex++;
                                               // Seek to shot start
-                                              safeSeekTo(
+                                              _videoPlayerKey.currentState?.seekTo(
                                                 Duration(
                                                   milliseconds:
                                                       (clip
@@ -1139,7 +1142,9 @@ class _ViewerPageState extends State<ViewerPage> {
                                 _sliderSeekDebouncer = Timer(
                                   const Duration(milliseconds: 150),
                                   () {
-                                    safeSeekTo(newPosition);
+                                    _videoPlayerKey.currentState?.seekTo(
+                                      newPosition,
+                                    );
                                     setState(() {
                                       _sliderSeekPosition =
                                           null; // Clear override
@@ -1153,7 +1158,9 @@ class _ViewerPageState extends State<ViewerPage> {
                                 final newPosition = Duration(
                                   milliseconds: value.round(),
                                 );
-                                safeSeekTo(newPosition);
+                                _videoPlayerKey.currentState?.seekTo(
+                                  newPosition,
+                                );
                                 setState(() {
                                   _sliderSeekPosition = null;
                                 });
@@ -1198,28 +1205,30 @@ class _ViewerPageState extends State<ViewerPage> {
                                         .clamp(0, double.infinity)
                                         .round(),
                               );
-                              safeSeekTo(newPosition);
+                              _videoPlayerKey.currentState?.seekTo(newPosition);
                             },
                             icon: const Icon(Icons.replay_10),
                             color: const Color(0xFF1565C0),
                             iconSize: 32,
                             tooltip: 'Back 1s',
                           ),
+
                           IconButton(
                             onPressed: () {
                               final playerState = _videoPlayerKey.currentState;
-                              playerState?.pause();
+                              //playerState?.play();
+                              if (playerState != null) {
+                                if (playerState.isPlaying) {
+                                  playerState.pause();
+                                } else {
+                                  playerState.play();
+                                }
+                              }
                             },
-                            icon: const Icon(Icons.pause),
-                            color: const Color(0xFF1565C0),
-                            iconSize: 40,
-                          ),
-                          IconButton(
-                            onPressed: () {
-                              final playerState = _videoPlayerKey.currentState;
-                              playerState?.play();
-                            },
-                            icon: const Icon(Icons.play_arrow),
+                            icon:
+                                _videoPlayerKey.currentState?.isPlaying == true
+                                ? const Icon(Icons.pause)
+                                : const Icon(Icons.play_arrow),
                             color: const Color(0xFF1565C0),
                             iconSize: 40,
                           ),
@@ -1239,7 +1248,7 @@ class _ViewerPageState extends State<ViewerPage> {
                                         .clamp(0, maxDuration.toDouble())
                                         .round(),
                               );
-                              safeSeekTo(newPosition);
+                              _videoPlayerKey.currentState?.seekTo(newPosition);
                             },
                             icon: const Icon(Icons.forward_10),
                             color: const Color(0xFF1565C0),
@@ -1248,7 +1257,9 @@ class _ViewerPageState extends State<ViewerPage> {
                           ),
                           IconButton(
                             onPressed: () {
-                              safeSeekTo(Duration.zero);
+                              _videoPlayerKey.currentState?.seekTo(
+                                Duration.zero,
+                              );
                             },
                             icon: const Icon(Icons.restart_alt),
                             color: const Color(0xFF1565C0),

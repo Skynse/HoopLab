@@ -3,18 +3,20 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
-import 'package:better_player_plus/better_player_plus.dart';
+import 'package:hooplab/widgets/clean_video_player.dart';
 
 class TimeLine extends StatefulWidget {
   const TimeLine({
     super.key,
     required this.clip,
-    required this.videoController,
+    required this.videoPlayerKey,
+    required this.currentPosition,
     this.thumbnails,
   });
 
   final Clip? clip;
-  final BetterPlayerController videoController;
+  final GlobalKey<CleanVideoPlayerState> videoPlayerKey;
+  final Duration currentPosition;
   final List<File>? thumbnails;
 
   @override
@@ -29,39 +31,33 @@ class _TimeLineState extends State<TimeLine> {
   @override
   void initState() {
     super.initState();
-    widget.videoController.addEventsListener((event) {
-      if (event.betterPlayerEventType == BetterPlayerEventType.progress) {
-        _onVideoPositionChanged();
-      }
-    });
     _updateSliderValue();
+  }
+
+  @override
+  void didUpdateWidget(TimeLine oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_isUserSeeking &&
+        widget.currentPosition != oldWidget.currentPosition) {
+      _updateSliderValue();
+    }
   }
 
   @override
   void dispose() {
     _seekDebounceTimer?.cancel();
-    // BetterPlayerController handles listeners internally
     super.dispose();
   }
 
-  void _onVideoPositionChanged() {
-    if (!_isUserSeeking && mounted) {
-      _updateSliderValue();
-    }
-  }
-
   void _updateSliderValue() {
-    final videoPlayerController = widget.videoController.videoPlayerController;
-    if (videoPlayerController == null) return;
+    final playerState = widget.videoPlayerKey.currentState;
+    if (playerState == null) return;
 
     try {
-      // Use duration as a proxy for initialization
-      if (videoPlayerController.value.duration == Duration.zero) return;
+      if (playerState.duration == Duration.zero) return;
 
-      final position = videoPlayerController.value.position.inSeconds
-          .toDouble();
-      final duration = videoPlayerController.value.duration!.inSeconds
-          .toDouble();
+      final position = widget.currentPosition.inSeconds.toDouble();
+      final duration = playerState.duration.inSeconds.toDouble();
 
       if (duration > 0 && position != _sliderValue) {
         setState(() {
@@ -69,7 +65,6 @@ class _TimeLineState extends State<TimeLine> {
         });
       }
     } catch (e) {
-      // Silently handle initialization issues
       return;
     }
   }
@@ -83,34 +78,37 @@ class _TimeLineState extends State<TimeLine> {
 
   void _onSliderChangeEnd(double value) {
     _seekDebounceTimer?.cancel();
-    _seekDebounceTimer = Timer(const Duration(milliseconds: 150), () {
-      if (mounted) {
-        widget.videoController
-            .seekTo(Duration(seconds: value.toInt()))
-            .then((_) {
+    final playerState = widget.videoPlayerKey.currentState;
+    if (playerState != null && mounted) {
+      playerState
+          .seekTo(Duration(seconds: value.toInt()))
+          .then((_) {
+            if (mounted) {
               setState(() {
                 _isUserSeeking = false;
               });
-            })
-            .catchError((error) {
-              debugPrint('Seek error: $error');
+            }
+          })
+          .catchError((error) {
+            debugPrint('Seek error: $error');
+            if (mounted) {
               setState(() {
                 _isUserSeeking = false;
               });
-            });
-      }
-    });
+            }
+          });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final videoDuration = () {
       try {
-        final controller = widget.videoController.videoPlayerController;
-        if (controller == null || controller.value.duration == Duration.zero) {
+        final playerState = widget.videoPlayerKey.currentState;
+        if (playerState == null || playerState.duration == Duration.zero) {
           return 1.0;
         }
-        return controller.value.duration!.inSeconds.toDouble();
+        return playerState.duration.inSeconds.toDouble();
       } catch (e) {
         return 1.0;
       }
