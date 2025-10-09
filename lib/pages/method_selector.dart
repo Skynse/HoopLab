@@ -611,7 +611,7 @@ class _VideoTrimmerState extends State<VideoTrimmer> {
         title: const Text('Trim Video'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.check),
+            icon: const Icon(Icons.check_circle),
             onPressed: _saveTrimmedVideo,
             tooltip: 'Save',
           ),

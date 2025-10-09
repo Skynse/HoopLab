@@ -47,6 +47,7 @@ dependencies:
   pro_video_editor: ^0.3.0
   video_player: ^2.10.0
   pro_image_editor: ^11.7.0
+  ffmpeg_kit_flutter_new: ^3.2.0
   chewie:
     git:
       url: https://github.com/gevork/chewie.git

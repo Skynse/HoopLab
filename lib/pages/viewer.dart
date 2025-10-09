@@ -9,6 +9,9 @@ import 'package:hooplab/widgets/trajectory_overlay.dart';
 import 'package:hooplab/utils/trajectory_prediction.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
 import 'package:pro_video_editor/pro_video_editor.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 
 import 'package:path/path.dart' as p;
 import 'package:video_thumbnail/video_thumbnail.dart';
@@ -122,84 +125,73 @@ class _ViewerPageState extends State<ViewerPage> {
         return null;
       }
 
-      // Extract frames using ProVideoEditor getThumbnails
-      final thumbnailList = await ProVideoEditor.instance.getThumbnails(
-        ThumbnailConfigs(
-          video: video,
-          outputSize: Size(videoWidth.toDouble(), videoHeight.toDouble()),
-          boxFit: ThumbnailBoxFit.contain,
-          timestamps: List.generate(totalFramesToExtract, (i) {
-            final midpointMs = (i + 0.5) * segmentDuration;
-            return Duration(milliseconds: midpointMs.round());
-          }),
-          outputFormat: ThumbnailFormat.jpeg,
-        ),
-      );
+      // Create temporary directory for frames
+      final framesDir = Directory.systemTemp.createTempSync('hooplab_frames');
 
-      // Check if cancelled after extraction
-      if (_isCancelled) {
-        debugPrint('❌ Frame extraction cancelled after thumbnail generation');
+      // Extract frames using FFmpeg (MUCH faster!)
+      debugPrint('🚀 Extracting frames with FFmpeg at ${targetFPS}fps...');
+
+      final outputPattern = p.join(framesDir.path, 'frame_%06d.jpg');
+
+      // FFmpeg command: extract frames at target FPS
+      final ffmpegCommand =
+          '-i "${widget.videoPath}" -vf fps=$targetFPS -q:v 2 "$outputPattern"';
+
+      debugPrint('📹 FFmpeg command: $ffmpegCommand');
+
+      final session = await FFmpegKit.execute(ffmpegCommand);
+      final returnCode = await session.getReturnCode();
+
+      if (!ReturnCode.isSuccess(returnCode)) {
+        debugPrint('❌ FFmpeg failed with return code: $returnCode');
+        final output = await session.getOutput();
+        debugPrint('FFmpeg output: $output');
         return null;
       }
 
-      debugPrint('🎉 Successfully extracted ${thumbnailList.length} frames');
+      // Check if cancelled after extraction
+      if (_isCancelled) {
+        debugPrint('❌ Frame extraction cancelled after FFmpeg');
+        return null;
+      }
+
+      // Get list of extracted frames
+      final extractedFiles =
+          framesDir
+              .listSync()
+              .whereType<File>()
+              .where((f) => f.path.endsWith('.jpg'))
+              .toList()
+            ..sort((a, b) => a.path.compareTo(b.path));
+
+      debugPrint('🎉 FFmpeg extracted ${extractedFiles.length} frames');
 
       // Update total frames to actual count
       if (mounted) {
         setState(() {
-          totalFramesToProcess = thumbnailList.length;
+          totalFramesToProcess = extractedFiles.length;
+          framesProcessed = extractedFiles.length;
         });
       }
 
-      // Create temporary directory for frames
-      final framesDir = Directory.systemTemp.createTempSync('hooplab_frames');
-
+      // Build frame data from extracted files
       List<Map<String, dynamic>> frameData = [];
 
-      // Save thumbnails to disk
-      for (int i = 0; i < thumbnailList.length; i++) {
-        // Check if cancelled during file writing
-        if (_isCancelled) {
-          debugPrint('❌ Frame extraction cancelled during file writing');
-          return null;
-        }
+      for (int i = 0; i < extractedFiles.length; i++) {
+        final frameFile = extractedFiles[i];
+        final timestamp = i / targetFPS; // Time in seconds
 
-        final thumbnailBytes = thumbnailList[i];
-        final positionMs = ((i + 0.5) * segmentDuration).round();
-        final frameName = 'frame_${i.toString().padLeft(6, '0')}.jpg';
-        final framePath = p.join(framesDir.path, frameName);
+        frameData.add({
+          'frame_index': i,
+          'extracted_index': i,
+          'timestamp': timestamp,
+          'filename': p.basename(frameFile.path),
+          'path': frameFile.path,
+          'file_size': await frameFile.length(),
+        });
 
-        try {
-          // Save thumbnail bytes to file
-          final frameFile = File(framePath);
-          await frameFile.writeAsBytes(thumbnailBytes);
-
-          frameData.add({
-            'frame_index': i,
-            'extracted_index': i,
-            'timestamp': positionMs / 1000.0,
-            'filename': frameName,
-            'path': framePath,
-            'file_size': thumbnailBytes.length,
-          });
-
-          if (i % 20 == 0) {
-            debugPrint(
-              '✅ Saved frame $i at ${(positionMs / 1000.0).toStringAsFixed(2)}s (${thumbnailBytes.length} bytes)',
-            );
-          }
-
-          // Update progress
-          if (mounted) {
-            setState(() {
-              analysisStatus =
-                  'Extracting frames... ${i + 1}/$totalFramesToExtract';
-              framesProcessed = i + 1;
-            });
-          }
-        } catch (e) {
-          debugPrint('❌ Error saving frame $i: $e');
-          continue;
+        if (i % 20 == 0) {
+          debugPrint('✅ Frame $i at ${timestamp.toStringAsFixed(2)}s');
         }
       }
 
@@ -661,7 +653,8 @@ class _ViewerPageState extends State<ViewerPage> {
 
         final results = await yoloModel!.predict(
           frameBytes,
-          confidenceThreshold: 0.5,
+          confidenceThreshold:
+              0.25, // Lower threshold to catch fast-moving balls
         );
 
         // Parse detections from YOLO results

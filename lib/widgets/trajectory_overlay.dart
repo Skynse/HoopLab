@@ -100,7 +100,7 @@ class TrajectoryPainter extends CustomPainter {
 
     // Draw current ball position
     if (scaledPoints.isNotEmpty) {
-      _drawCurrentBall(canvas, scaledPoints.last);
+      _drawCurrentBall(canvas, scaledPoints.last, scale, offsetX, offsetY);
     }
 
     // Find and draw hoop if detected
@@ -177,8 +177,47 @@ class TrajectoryPainter extends CustomPainter {
     canvas.drawPath(path, pathPaint);
   }
 
-  /// Draw current ball position
-  void _drawCurrentBall(Canvas canvas, Offset position) {
+  /// Draw current ball position with debug bounding box
+  void _drawCurrentBall(
+    Canvas canvas,
+    Offset position,
+    double scale,
+    double offsetX,
+    double offsetY,
+  ) {
+    // Find the ball detection at current time for bounding box
+    final currentTimeMs = currentVideoPosition.inMilliseconds.toDouble();
+    BoundingBox? ballBBox;
+
+    for (final frame in frames) {
+      if (frame.timestamp * 1000 > currentTimeMs) break;
+
+      final ballDetections = frame.detections
+          .where((d) => d.label.toLowerCase().contains('ball'))
+          .toList();
+
+      if (ballDetections.isNotEmpty) {
+        ballBBox = ballDetections.first.bbox;
+      }
+    }
+
+    // Draw bounding box if available (scaled to widget coordinates)
+    if (ballBBox != null) {
+      final bboxPaint = Paint()
+        ..color = Colors.yellow
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke;
+
+      final rect = Rect.fromLTRB(
+        ballBBox.x1 * scale + offsetX,
+        ballBBox.y1 * scale + offsetY,
+        ballBBox.x2 * scale + offsetX,
+        ballBBox.y2 * scale + offsetY,
+      );
+
+      canvas.drawRect(rect, bboxPaint);
+    }
+
     // Ball shadow
     final shadowPaint = Paint()
       ..color = Colors.black.withValues(alpha: 0.3)
