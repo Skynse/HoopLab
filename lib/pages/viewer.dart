@@ -730,6 +730,7 @@ class _ViewerPageState extends State<ViewerPage> {
       key: _videoPlayerKey,
       videoPath: widget.videoPath!,
       onPositionChanged: (position) {
+        if (!mounted) return;
         setState(() {
           _currentVideoPosition = position;
         });
