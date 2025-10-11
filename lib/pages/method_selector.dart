@@ -212,115 +212,117 @@ class _MethodSelectorState extends State<MethodSelector>
       body: FadeTransition(
         opacity: _fadeAnimation,
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  'Select how you want to add your video',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    color: colorScheme.onSurface.withOpacity(0.8),
-                    fontWeight: FontWeight.w500,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                // Recording Tips Card
-                Card(
-                  elevation: 1,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.lightbulb_outline,
-                              color: colorScheme.primary,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Tips for Best Results',
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                color: colorScheme.primary,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        _buildTip(
-                          '📹',
-                          'Keep camera steady (use tripod if possible)',
-                        ),
-                        const SizedBox(height: 6),
-                        _buildTip(
-                          '🏀',
-                          'Capture full shot: release → peak → rim',
-                        ),
-                        const SizedBox(height: 6),
-                        _buildTip(
-                          '💡',
-                          'Good lighting - avoid shadows on ball',
-                        ),
-                        const SizedBox(height: 6),
-                        _buildTip('🎯', 'Keep hoop fully visible in frame'),
-                        const SizedBox(height: 6),
-                        _buildTip(
-                          '📏',
-                          'Film from side angle (45°) for best tracking',
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 32),
-
-                // Responsive layout
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final isWide = constraints.maxWidth > 600;
-
-                    if (isWide) {
-                      return Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          Expanded(child: _buildLiveDetectionButton(theme)),
-                          const SizedBox(width: _buttonSpacing),
-                          Expanded(child: _buildCameraButton(theme)),
-                          const SizedBox(width: _buttonSpacing),
-                          Expanded(child: _buildGalleryButton(theme)),
-                        ],
-                      );
-                    } else {
-                      return Column(
-                        children: [
-                          _buildLiveDetectionButton(theme),
-                          const SizedBox(height: _buttonSpacing),
-                          _buildCameraButton(theme),
-                          const SizedBox(height: _buttonSpacing),
-                          _buildGalleryButton(theme),
-                        ],
-                      );
-                    }
-                  },
-                ),
-
-                if (_isLoading) ...[
-                  const SizedBox(height: 32),
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 16),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
                   Text(
-                    'Please wait...',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurface.withOpacity(0.6),
+                    'Select how you want to add your video',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      color: colorScheme.onSurface.withOpacity(0.8),
+                      fontWeight: FontWeight.w500,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  // Recording Tips Card
+                  Card(
+                    elevation: 1,
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.lightbulb_outline,
+                                color: colorScheme.primary,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Tips for Best Results',
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  color: colorScheme.primary,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          _buildTip(
+                            '📹',
+                            'Keep camera steady (use tripod if possible)',
+                          ),
+                          const SizedBox(height: 6),
+                          _buildTip(
+                            '🏀',
+                            'Capture full shot: release → peak → rim',
+                          ),
+                          const SizedBox(height: 6),
+                          _buildTip(
+                            '💡',
+                            'Good lighting - avoid shadows on ball',
+                          ),
+                          const SizedBox(height: 6),
+                          _buildTip('🎯', 'Keep hoop fully visible in frame'),
+                          const SizedBox(height: 6),
+                          _buildTip(
+                            '📏',
+                            'Film from side angle (45°) for best tracking',
+                          ),
+                        ],
+                      ),
                     ),
                   ),
+                  const SizedBox(height: 32),
+
+                  // Responsive layout
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isWide = constraints.maxWidth > 600;
+
+                      if (isWide) {
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            Expanded(child: _buildLiveDetectionButton(theme)),
+                            const SizedBox(width: _buttonSpacing),
+                            Expanded(child: _buildCameraButton(theme)),
+                            const SizedBox(width: _buttonSpacing),
+                            Expanded(child: _buildGalleryButton(theme)),
+                          ],
+                        );
+                      } else {
+                        return Column(
+                          children: [
+                            // _buildLiveDetectionButton(theme),
+                            // const SizedBox(height: _buttonSpacing),
+                            _buildCameraButton(theme),
+                            const SizedBox(height: _buttonSpacing),
+                            _buildGalleryButton(theme),
+                          ],
+                        );
+                      }
+                    },
+                  ),
+
+                  if (_isLoading) ...[
+                    const SizedBox(height: 32),
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Please wait...',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
