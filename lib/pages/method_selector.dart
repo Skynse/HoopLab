@@ -253,10 +253,7 @@ class _MethodSelectorState extends State<MethodSelector>
                             ],
                           ),
                           const SizedBox(height: 12),
-                          _buildTip(
-                            '📹',
-                            'Keep camera steady (use tripod if possible)',
-                          ),
+                          _buildTip('📹', 'Have BACKBOARD in view'),
                           const SizedBox(height: 6),
                           _buildTip(
                             '🏀',
