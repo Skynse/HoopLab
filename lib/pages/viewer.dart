@@ -720,7 +720,7 @@ class _ViewerPageState extends State<ViewerPage> {
         var results2 = combined_results[1];
         var results = combined_results[0];
 
-        print("POSE" + results2.toString());
+        print("POSE " + results2.toString());
 
         // Parse detections from YOLO results
         final frameDetections = <Detection>[];
