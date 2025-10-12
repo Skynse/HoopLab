@@ -38,6 +38,7 @@ class _ViewerPageState extends State<ViewerPage> {
   Timer? _sliderSeekDebouncer;
   StreamSubscription? analysisSubscription;
   YOLO? yoloModel;
+  YOLO? yoloModel2;
   int totalFramesToProcess = 0;
   int framesProcessed = 0;
   int totalDetections = 0;
@@ -595,15 +596,24 @@ class _ViewerPageState extends State<ViewerPage> {
 
   void initializeYoloModel() async {
     try {
-      final modelExists = await YOLO.checkModelExists('best_float16');
+      final modelExists = await YOLO.checkModelExists('yolo11n-pose');
       print('Model exists: ${modelExists['exists']}');
       print('Location: ${modelExists['location']}');
 
       // 2. List available assets
       final storagePaths = await YOLO.getStoragePaths();
       print('Storage paths: $storagePaths');
-      yoloModel = YOLO(modelPath: 'best_float16', task: YOLOTask.detect);
-      await yoloModel!.loadModel();
+      yoloModel = YOLO(
+        modelPath: 'best_float16',
+        task: YOLOTask.detect,
+        useMultiInstance: true,
+      );
+      yoloModel2 = YOLO(
+        modelPath: 'yolo11n-pose',
+        task: YOLOTask.pose,
+        useMultiInstance: true,
+      );
+      await Future.wait([yoloModel!.loadModel(), yoloModel2!.loadModel()]);
       debugPrint('✅ YOLO model loaded successfully');
     } catch (e) {
       debugPrint('❌ Error initializing YOLO model: $e');
@@ -682,11 +692,35 @@ class _ViewerPageState extends State<ViewerPage> {
           framesProcessed = 0;
         }
 
-        final results = await yoloModel!.predict(
-          frameBytes,
-          confidenceThreshold:
-              0.25, // Lower threshold to catch fast-moving balls
-        );
+        // final results = await yoloModel!.predict(
+        //   frameBytes,
+        //   confidenceThreshold:
+        //       0.25, // Lower threshold to catch fast-moving balls
+        // );
+
+        // final results2 = await yoloModel2!.predict(
+        //   frameBytes,
+        //   confidenceThreshold:
+        //       0.5, // Lower threshold to catch fast-moving balls
+        // );
+        //
+        final combined_results = await Future.wait([
+          yoloModel!.predict(
+            frameBytes,
+            confidenceThreshold:
+                0.25, // Lower threshold to catch fast-moving balls
+          ),
+          yoloModel2!.predict(
+            frameBytes,
+            confidenceThreshold:
+                0.5, // Lower threshold to catch fast-moving balls
+          ),
+        ]);
+
+        var results2 = combined_results[1];
+        var results = combined_results[0];
+
+        print("POSE" + results2.toString());
 
         // Parse detections from YOLO results
         final frameDetections = <Detection>[];
