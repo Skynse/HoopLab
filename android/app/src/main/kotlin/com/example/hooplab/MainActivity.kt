@@ -1,4 +1,4 @@
-package com.example.hooplab
+package com.derekli.hooplab
 
 import io.flutter.embedding.android.FlutterActivity
 
