@@ -1,28 +1,47 @@
 import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
 import 'package:hooplab/utils/trajectory_prediction.dart';
+import 'package:hooplab/utils/pose_painter.dart';
+import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
 class TrajectoryOverlay extends StatelessWidget {
   final List<FrameData> frames;
   final Duration currentVideoPosition;
   final Size videoSize;
+  final bool showPoseSkeleton;
 
   const TrajectoryOverlay({
     super.key,
     required this.frames,
     required this.currentVideoPosition,
     required this.videoSize,
+    this.showPoseSkeleton = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: TrajectoryPainter(
-        frames: frames,
-        currentVideoPosition: currentVideoPosition,
-        videoSize: videoSize,
-      ),
-      size: Size.infinite,
+    return Stack(
+      children: [
+        // Trajectory overlay
+        CustomPaint(
+          painter: TrajectoryPainter(
+            frames: frames,
+            currentVideoPosition: currentVideoPosition,
+            videoSize: videoSize,
+          ),
+          size: Size.infinite,
+        ),
+        // Pose skeleton overlay (if enabled)
+        if (showPoseSkeleton)
+          CustomPaint(
+            painter: PoseSkeletonOverlay(
+              frames: frames,
+              currentVideoPosition: currentVideoPosition,
+              videoSize: videoSize,
+            ),
+            size: Size.infinite,
+          ),
+      ],
     );
   }
 }
@@ -569,6 +588,188 @@ class TrajectoryPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(TrajectoryPainter oldDelegate) {
+    return currentVideoPosition != oldDelegate.currentVideoPosition ||
+        frames != oldDelegate.frames;
+  }
+}
+
+/// Painter for pose skeleton overlay
+class PoseSkeletonOverlay extends CustomPainter {
+  final List<FrameData> frames;
+  final Duration currentVideoPosition;
+  final Size videoSize;
+
+  PoseSkeletonOverlay({
+    required this.frames,
+    required this.currentVideoPosition,
+    required this.videoSize,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (frames.isEmpty) return;
+
+    // Calculate scaling
+    final scaleX = size.width / videoSize.width;
+    final scaleY = size.height / videoSize.height;
+    final scale = scaleX < scaleY ? scaleX : scaleY;
+
+    final offsetX = (size.width - (videoSize.width * scale)) / 2;
+    final offsetY = (size.height - (videoSize.height * scale)) / 2;
+
+    // Find the frame closest to current video position
+    final currentTimeSeconds = currentVideoPosition.inMilliseconds / 1000.0;
+    FrameData? currentFrame;
+
+    for (final frame in frames) {
+      if (frame.timestamp <= currentTimeSeconds) {
+        currentFrame = frame;
+      } else {
+        break;
+      }
+    }
+
+    if (currentFrame == null ||
+        currentFrame.poses == null ||
+        currentFrame.poses!.isEmpty) {
+      return;
+    }
+
+    // Draw pose skeletons
+    for (final pose in currentFrame.poses!) {
+      _drawPoseSkeleton(canvas, pose, scale, offsetX, offsetY);
+    }
+
+    // Draw shooting confidence indicator if in shooting motion
+    if (currentFrame.isShootingMotion) {
+      _drawShootingIndicator(canvas, size, currentFrame.shootingConfidence);
+    }
+  }
+
+  void _drawPoseSkeleton(
+    Canvas canvas,
+    Pose pose,
+    double scale,
+    double offsetX,
+    double offsetY,
+  ) {
+    final landmarks = pose.landmarks;
+
+    // Define bone connections
+    final connections = [
+      // Left arm
+      [PoseLandmarkType.leftShoulder, PoseLandmarkType.leftElbow],
+      [PoseLandmarkType.leftElbow, PoseLandmarkType.leftWrist],
+
+      // Right arm
+      [PoseLandmarkType.rightShoulder, PoseLandmarkType.rightElbow],
+      [PoseLandmarkType.rightElbow, PoseLandmarkType.rightWrist],
+
+      // Torso
+      [PoseLandmarkType.leftShoulder, PoseLandmarkType.rightShoulder],
+      [PoseLandmarkType.leftShoulder, PoseLandmarkType.leftHip],
+      [PoseLandmarkType.rightShoulder, PoseLandmarkType.rightHip],
+      [PoseLandmarkType.leftHip, PoseLandmarkType.rightHip],
+
+      // Left leg
+      [PoseLandmarkType.leftHip, PoseLandmarkType.leftKnee],
+      [PoseLandmarkType.leftKnee, PoseLandmarkType.leftAnkle],
+
+      // Right leg
+      [PoseLandmarkType.rightHip, PoseLandmarkType.rightKnee],
+      [PoseLandmarkType.rightKnee, PoseLandmarkType.rightAnkle],
+    ];
+
+    // Draw bones
+    final bonePaint = Paint()
+      ..strokeWidth = 3.0
+      ..style = PaintingStyle.stroke;
+
+    for (final connection in connections) {
+      final point1 = landmarks[connection[0]];
+      final point2 = landmarks[connection[1]];
+
+      if (point1 != null && point2 != null) {
+        final start = Offset(
+          point1.x * scale + offsetX,
+          point1.y * scale + offsetY,
+        );
+        final end = Offset(
+          point2.x * scale + offsetX,
+          point2.y * scale + offsetY,
+        );
+
+        // Color based on confidence
+        final avgConfidence = (point1.likelihood + point2.likelihood) / 2;
+        if (avgConfidence > 0.7) {
+          bonePaint.color = Colors.greenAccent.withOpacity(0.8);
+        } else if (avgConfidence > 0.5) {
+          bonePaint.color = Colors.yellowAccent.withOpacity(0.8);
+        } else {
+          bonePaint.color = Colors.redAccent.withOpacity(0.5);
+        }
+
+        canvas.drawLine(start, end, bonePaint);
+      }
+    }
+
+    // Draw joints
+    final jointPaint = Paint()..style = PaintingStyle.fill;
+
+    for (final entry in landmarks.entries) {
+      final landmark = entry.value;
+      final point = Offset(
+        landmark.x * scale + offsetX,
+        landmark.y * scale + offsetY,
+      );
+
+      // Color based on confidence
+      if (landmark.likelihood > 0.7) {
+        jointPaint.color = Colors.greenAccent;
+      } else if (landmark.likelihood > 0.5) {
+        jointPaint.color = Colors.yellowAccent;
+      } else {
+        jointPaint.color = Colors.redAccent.withOpacity(0.5);
+      }
+
+      // Draw circle for joint
+      canvas.drawCircle(point, 5.0, jointPaint);
+
+      // Draw white border
+      canvas.drawCircle(
+        point,
+        5.0,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0,
+      );
+    }
+  }
+
+  void _drawShootingIndicator(Canvas canvas, Size size, double confidence) {
+    // Draw "SHOOTING" indicator at top
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: '🏀 SHOOTING (${(confidence * 100).toStringAsFixed(0)}%)',
+        style: TextStyle(
+          color: Colors.green,
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+          shadows: [
+            Shadow(color: Colors.black.withOpacity(0.8), blurRadius: 4),
+          ],
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+
+    textPainter.layout();
+    textPainter.paint(canvas, Offset((size.width - textPainter.width) / 2, 20));
+  }
+
+  @override
+  bool shouldRepaint(PoseSkeletonOverlay oldDelegate) {
     return currentVideoPosition != oldDelegate.currentVideoPosition ||
         frames != oldDelegate.frames;
   }

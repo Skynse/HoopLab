@@ -7,8 +7,10 @@ import 'package:hooplab/utils/frame_cache.dart';
 import 'package:hooplab/widgets/clean_video_player.dart';
 import 'package:hooplab/widgets/trajectory_overlay.dart';
 import 'package:hooplab/utils/trajectory_prediction.dart';
+import 'package:hooplab/utils/shooting_pose_detector.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
 import 'package:pro_video_editor/pro_video_editor.dart';
+import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
@@ -38,13 +40,19 @@ class _ViewerPageState extends State<ViewerPage> {
   Timer? _sliderSeekDebouncer;
   StreamSubscription? analysisSubscription;
   YOLO? yoloModel;
-  YOLO? yoloModel2;
+  ShootingPoseDetector? poseDetector;
   int totalFramesToProcess = 0;
   int framesProcessed = 0;
   int totalDetections = 0;
+  int shootingFramesDetected = 0; // Track frames with shooting motion
   int curFrame = 0;
   int currentShotIndex = 0; // Track which shot we're viewing
   bool _isCancelled = false; // Track if extraction is cancelled
+
+  // Detection mode settings
+  bool useCourtMode =
+      false; // false = backboard mode, true = court/sideways mode
+  bool showPoseSkeleton = false; // Toggle to show pose bones
 
   // Video handled by CleanVideoPlayer
 
@@ -304,8 +312,32 @@ class _ViewerPageState extends State<ViewerPage> {
   void _segmentShots() {
     if (clip.frames.isEmpty) return;
 
-    debugPrint('🏀 Starting shot segmentation with up/down regions...');
+    // User explicitly chose court mode - force pose-based detection
+    if (useCourtMode) {
+      final hasPoseData = clip.frames.any((f) => f.isShootingMotion);
+      if (hasPoseData) {
+        debugPrint('🏀 Starting POSE-BASED shot segmentation (Court Mode)...');
+        _segmentShotsWithPose();
+      } else {
+        debugPrint('⚠️ Court mode selected but no shooting motion detected!');
+        debugPrint(
+          '📊 Pose detection may need adjustment or video has no visible person shooting',
+        );
+        // Still try legacy as fallback
+        _segmentShotsLegacy();
+      }
+      return;
+    }
 
+    // Backboard mode - use legacy detection
+    debugPrint(
+      '🏀 Starting shot segmentation with up/down regions (Backboard Mode)...',
+    );
+    _segmentShotsLegacy();
+  }
+
+  /// Legacy shot segmentation using ball trajectory only
+  void _segmentShotsLegacy() {
     final shots = <Shot>[];
     List<FrameData> currentShotFrames = [];
     List<Offset> currentShotBallPositions = [];
@@ -436,7 +468,178 @@ class _ViewerPageState extends State<ViewerPage> {
       currentShotIndex = shots.isNotEmpty ? 0 : -1;
     });
 
-    debugPrint('🏀 Shot segmentation complete: ${shots.length} shots detected');
+    debugPrint(
+      '🏀 Legacy shot segmentation complete: ${shots.length} shots detected',
+    );
+  }
+
+  /// Enhanced shot segmentation using pose detection data
+  /// Only tracks ball trajectory when someone is in shooting motion
+  void _segmentShotsWithPose() {
+    final shots = <Shot>[];
+    List<FrameData> currentShotFrames = [];
+    List<Offset> currentShotBallPositions = [];
+
+    bool inShootingMotion = false;
+    int shootingStartFrame = 0;
+    int consecutiveNonShootingFrames = 0;
+
+    // Find hoop position
+    Offset? hoopPosition = _findHoopPosition();
+
+    if (hoopPosition == null) {
+      debugPrint('❌ No hoop detected, cannot segment shots');
+      return;
+    }
+
+    for (int i = 0; i < clip.frames.length; i++) {
+      final frame = clip.frames[i];
+
+      // Check if someone is in shooting motion
+      if (frame.isShootingMotion && frame.shootingConfidence > 0.6) {
+        consecutiveNonShootingFrames = 0;
+
+        // Start tracking a new shot
+        if (!inShootingMotion) {
+          inShootingMotion = true;
+          shootingStartFrame = i;
+          currentShotFrames = [];
+          currentShotBallPositions = [];
+          debugPrint(
+            '🏃 Shooting motion started at frame $i (${frame.timestamp}s)',
+          );
+        }
+
+        // Add frame to current shot
+        currentShotFrames.add(frame);
+
+        // Track ball position during shooting motion
+        final ballDetections = frame.detections
+            .where((d) => d.label.toLowerCase().contains('ball'))
+            .toList();
+
+        if (ballDetections.isNotEmpty) {
+          final ball = ballDetections.first;
+          final ballPos = Offset(ball.bbox.centerX, ball.bbox.centerY);
+          currentShotBallPositions.add(ballPos);
+        }
+      } else {
+        // Not in shooting motion
+        if (inShootingMotion) {
+          consecutiveNonShootingFrames++;
+
+          // Keep adding frames for a bit after shooting motion ends
+          // (to capture the full arc and landing)
+          if (consecutiveNonShootingFrames <= 20) {
+            currentShotFrames.add(frame);
+
+            // Continue tracking ball
+            final ballDetections = frame.detections
+                .where((d) => d.label.toLowerCase().contains('ball'))
+                .toList();
+
+            if (ballDetections.isNotEmpty) {
+              final ball = ballDetections.first;
+              final ballPos = Offset(ball.bbox.centerX, ball.bbox.centerY);
+              currentShotBallPositions.add(ballPos);
+            }
+          } else {
+            // Shooting motion ended, save the shot
+            if (currentShotFrames.length >= 10 &&
+                currentShotBallPositions.length >= 5) {
+              final shot = Shot(
+                id: shots.length,
+                frames: List.from(currentShotFrames),
+                startTime: currentShotFrames.first.timestamp,
+                endTime: currentShotFrames.last.timestamp,
+                hoopPosition: hoopPosition,
+              );
+
+              // Calculate shot accuracy
+              final hoopBBox = _getAverageHoopBBox(
+                shootingStartFrame,
+                i - 1,
+                null,
+              );
+
+              final accuracyResult =
+                  TrajectoryPredictor.calculateShotAccuracyFromRimCrossing(
+                    ballPoints: currentShotBallPositions,
+                    hoopPosition: hoopPosition,
+                    hoopBBox: hoopBBox,
+                    hoopRadius: hoopBBox != null ? hoopBBox.width / 2 : 30.0,
+                    frames: currentShotFrames,
+                  );
+
+              shot.accuracy = accuracyResult.accuracy;
+              shot.prediction = accuracyResult.accuracy > 50.0
+                  ? "MAKE"
+                  : "MISS";
+
+              shots.add(shot);
+              debugPrint(
+                '✅ Pose-based shot ${shot.id} completed: '
+                'Accuracy=${shot.accuracy?.toStringAsFixed(1) ?? "N/A"}% '
+                '(${currentShotFrames.length} frames, ${currentShotBallPositions.length} ball positions)',
+              );
+            } else {
+              debugPrint(
+                '⚠️ Discarded short shot: ${currentShotFrames.length} frames, '
+                '${currentShotBallPositions.length} ball positions',
+              );
+            }
+
+            // Reset for next shot
+            inShootingMotion = false;
+            currentShotFrames = [];
+            currentShotBallPositions = [];
+            consecutiveNonShootingFrames = 0;
+          }
+        }
+      }
+    }
+
+    // Handle last shot if still in progress
+    if (inShootingMotion && currentShotFrames.length >= 10) {
+      final shot = Shot(
+        id: shots.length,
+        frames: List.from(currentShotFrames),
+        startTime: currentShotFrames.first.timestamp,
+        endTime: currentShotFrames.last.timestamp,
+        hoopPosition: hoopPosition,
+      );
+
+      if (currentShotBallPositions.length >= 5) {
+        final hoopBBox = _getAverageHoopBBox(
+          shootingStartFrame,
+          clip.frames.length - 1,
+          null,
+        );
+
+        final accuracyResult =
+            TrajectoryPredictor.calculateShotAccuracyFromRimCrossing(
+              ballPoints: currentShotBallPositions,
+              hoopPosition: hoopPosition,
+              hoopBBox: hoopBBox,
+              hoopRadius: hoopBBox != null ? hoopBBox.width / 2 : 30.0,
+              frames: currentShotFrames,
+            );
+
+        shot.accuracy = accuracyResult.accuracy;
+        shot.prediction = accuracyResult.accuracy > 50.0 ? "MAKE" : "MISS";
+      }
+
+      shots.add(shot);
+    }
+
+    setState(() {
+      clip.shots = shots;
+      currentShotIndex = shots.isNotEmpty ? 0 : -1;
+    });
+
+    debugPrint(
+      '🏀 Pose-based shot segmentation complete: ${shots.length} shots detected',
+    );
   }
 
   /// Check if ball is in the "UP" region (around backboard, above hoop)
@@ -596,27 +799,25 @@ class _ViewerPageState extends State<ViewerPage> {
 
   void initializeYoloModel() async {
     try {
-      final modelExists = await YOLO.checkModelExists('yolo11n-pose');
-      print('Model exists: ${modelExists['exists']}');
-      print('Location: ${modelExists['location']}');
-
-      // 2. List available assets
-      final storagePaths = await YOLO.getStoragePaths();
-      print('Storage paths: $storagePaths');
+      // Initialize YOLO for ball/hoop detection
       yoloModel = YOLO(
         modelPath: 'best_float16',
         task: YOLOTask.detect,
         useMultiInstance: true,
       );
-      yoloModel2 = YOLO(
-        modelPath: 'yolo11n-pose',
-        task: YOLOTask.pose,
-        useMultiInstance: true,
-      );
-      await Future.wait([yoloModel!.loadModel(), yoloModel2!.loadModel()]);
+      await yoloModel!.loadModel();
       debugPrint('✅ YOLO model loaded successfully');
+
+      // Initialize ML Kit pose detector for shooting motion detection
+      poseDetector = ShootingPoseDetector(
+        options: PoseDetectorOptions(
+          mode: PoseDetectionMode.stream,
+          model: PoseDetectionModel.accurate,
+        ),
+      );
+      debugPrint('✅ ML Kit pose detector initialized');
     } catch (e) {
-      debugPrint('❌ Error initializing YOLO model: $e');
+      debugPrint('❌ Error initializing models: $e');
     }
   }
 
@@ -626,6 +827,7 @@ class _ViewerPageState extends State<ViewerPage> {
     _sliderSeekDebouncer?.cancel();
     analysisSubscription?.cancel();
     _frameCache.clear();
+    poseDetector?.dispose();
     super.dispose();
   }
 
@@ -692,35 +894,25 @@ class _ViewerPageState extends State<ViewerPage> {
           framesProcessed = 0;
         }
 
-        // final results = await yoloModel!.predict(
-        //   frameBytes,
-        //   confidenceThreshold:
-        //       0.25, // Lower threshold to catch fast-moving balls
-        // );
+        // Run YOLO ball/hoop detection and ML Kit pose detection in parallel
+        final ballDetectionFuture = yoloModel!.predict(
+          frameBytes,
+          confidenceThreshold: 0.25,
+        );
 
-        // final results2 = await yoloModel2!.predict(
-        //   frameBytes,
-        //   confidenceThreshold:
-        //       0.5, // Lower threshold to catch fast-moving balls
-        // );
-        //
-        final combined_results = await Future.wait([
-          yoloModel!.predict(
-            frameBytes,
-            confidenceThreshold:
-                0.25, // Lower threshold to catch fast-moving balls
-          ),
-          yoloModel2!.predict(
-            frameBytes,
-            confidenceThreshold:
-                0.5, // Lower threshold to catch fast-moving balls
-          ),
-        ]);
+        // Create InputImage for ML Kit from file path (JPEG format)
+        final inputImage = InputImage.fromFilePath(framePath);
 
-        var results2 = combined_results[1];
-        var results = combined_results[0];
+        final poseFuture = poseDetector?.detectShootingPose(inputImage);
 
-        print("POSE " + results2.toString());
+        // Wait for both to complete
+        final results = await ballDetectionFuture;
+        final poseResult = await poseFuture;
+
+        debugPrint(
+          '🏃 Pose detection: isShootingMotion=${poseResult?.isShootingMotion ?? false}, '
+          'confidence=${poseResult?.shootingConfidence.toStringAsFixed(2) ?? "0.00"}',
+        );
 
         // Parse detections from YOLO results
         final frameDetections = <Detection>[];
@@ -777,6 +969,9 @@ class _ViewerPageState extends State<ViewerPage> {
           frameNumber: frameNumber,
           timestamp: preciseTimestampMs / 1000.0,
           detections: frameDetections,
+          isShootingMotion: poseResult?.isShootingMotion ?? false,
+          shootingConfidence: poseResult?.shootingConfidence ?? 0.0,
+          poses: poseResult?.poses, // Store pose data for visualization
         );
 
         yield frameData;
@@ -832,6 +1027,7 @@ class _ViewerPageState extends State<ViewerPage> {
               videoSize:
                   _videoPlayerKey.currentState?.videoSize ??
                   const Size(1920, 1080),
+              showPoseSkeleton: showPoseSkeleton,
             )
           : null,
     );
@@ -843,9 +1039,27 @@ class _ViewerPageState extends State<ViewerPage> {
       backgroundColor: Colors.black,
       appBar: AppBar(
         title: const Text("Shot Analysis"),
-
         elevation: 0,
-        actions: [],
+        actions: [
+          // Pose skeleton toggle (only show after analysis with pose data)
+          if (clip.frames.isNotEmpty && clip.frames.any((f) => f.poses != null))
+            IconButton(
+              icon: Icon(
+                showPoseSkeleton
+                    ? Icons.accessibility
+                    : Icons.accessibility_outlined,
+                color: showPoseSkeleton ? Colors.green : Colors.white,
+              ),
+              onPressed: () {
+                setState(() {
+                  showPoseSkeleton = !showPoseSkeleton;
+                });
+              },
+              tooltip: showPoseSkeleton
+                  ? 'Hide Pose Skeleton'
+                  : 'Show Pose Skeleton',
+            ),
+        ],
       ),
       body: Stack(
         children: [
@@ -872,6 +1086,104 @@ class _ViewerPageState extends State<ViewerPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // Detection mode selector (only show before analysis)
+                    if (!isAnalyzing && clip.frames.isEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.blue.withOpacity(0.3),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Detection Mode',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: RadioListTile<bool>(
+                                    dense: true,
+                                    contentPadding: EdgeInsets.zero,
+                                    title: const Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          '🏀 Backboard View',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        Text(
+                                          'Backboard visible',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    value: false,
+                                    groupValue: useCourtMode,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        useCourtMode = value!;
+                                      });
+                                    },
+                                  ),
+                                ),
+                                Expanded(
+                                  child: RadioListTile<bool>(
+                                    dense: true,
+                                    contentPadding: EdgeInsets.zero,
+                                    title: const Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          '🏃 Court/Sideways',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        Text(
+                                          'Uses pose detection',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    value: true,
+                                    groupValue: useCourtMode,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        useCourtMode = value!;
+                                      });
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
                     // Analysis button
                     if (!isAnalyzing && clip.frames.isEmpty)
                       SizedBox(
@@ -884,6 +1196,7 @@ class _ViewerPageState extends State<ViewerPage> {
                               clip.frames.clear();
                               clip.shots.clear();
                               totalDetections = 0;
+                              shootingFramesDetected = 0;
                               framesProcessed = 0;
                               currentShotIndex = 0;
                             });
@@ -897,6 +1210,9 @@ class _ViewerPageState extends State<ViewerPage> {
                                     // framesProcessed already incremented in analyzeVideoFrames()
                                     totalDetections +=
                                         frameData.detections.length;
+                                    if (frameData.isShootingMotion) {
+                                      shootingFramesDetected++;
+                                    }
                                     analysisStatus =
                                         'Analyzing... $framesProcessed/$totalFramesToProcess';
                                   });
@@ -937,45 +1253,90 @@ class _ViewerPageState extends State<ViewerPage> {
 
                     // Analysis in progress
                     if (isAnalyzing) ...[
-                      Row(
-                        children: [
-                          const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Colors.blue.withOpacity(0.3),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
                               children: [
-                                Text(
-                                  'Analyzing frames...',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey[800],
+                                const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
                                   ),
                                 ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Analyzing frames...',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.grey[800],
+                                        ),
+                                      ),
+                                      Text(
+                                        '$framesProcessed frames • $totalDetections detections',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[600],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: () {
+                                    analysisSubscription?.cancel();
+                                    setState(() {
+                                      isAnalyzing = false;
+                                    });
+                                  },
+                                  child: const Text("Stop"),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            // Pose detection indicator
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.accessibility_new,
+                                  size: 16,
+                                  color: shootingFramesDetected > 0
+                                      ? Colors.green
+                                      : Colors.grey,
+                                ),
+                                const SizedBox(width: 8),
                                 Text(
-                                  '$framesProcessed frames • $totalDetections detections',
+                                  shootingFramesDetected > 0
+                                      ? 'Pose detection: $shootingFramesDetected shooting frames detected 🏀'
+                                      : 'Pose detection: active (no shooting motion yet)',
                                   style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey[600],
+                                    fontSize: 11,
+                                    color: shootingFramesDetected > 0
+                                        ? Colors.green[700]
+                                        : Colors.grey[600],
+                                    fontWeight: shootingFramesDetected > 0
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
                                   ),
                                 ),
                               ],
                             ),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              analysisSubscription?.cancel();
-                              setState(() {
-                                isAnalyzing = false;
-                              });
-                            },
-                            child: const Text("Stop"),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ],
 
@@ -1176,10 +1537,78 @@ class _ViewerPageState extends State<ViewerPage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      Text(
-                        '${clip.frames.length} frames analyzed • $totalDetections detections found',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                        textAlign: TextAlign.center,
+                      // Analysis summary with pose detection info
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: Colors.green.withOpacity(0.3),
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.check_circle,
+                                  color: Colors.green[700],
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '${clip.frames.length} frames analyzed',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey[800],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '$totalDetections ball/hoop detections',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                            if (shootingFramesDetected > 0) ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.accessibility_new,
+                                    color: Colors.green[700],
+                                    size: 16,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '$shootingFramesDetected frames with shooting motion detected',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.green[700],
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ] else ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'No shooting motion detected (using legacy detection)',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.orange[700],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                       ),
                     ],
 

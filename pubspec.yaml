@@ -51,6 +51,7 @@ dependencies:
     git:
       url: https://github.com/gevork/chewie.git
   ultralytics_yolo: 0.1.36
+  google_mlkit_pose_detection: ^0.13.0
 
 dev_dependencies:
   flutter_test:
@@ -82,7 +83,6 @@ flutter:
   assets:
     - assets/video.mp4
     - assets/best_float16.tflite
-    - assets/yolo11n-pose.tflite
     - assets/best_float16.mlpackage/
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

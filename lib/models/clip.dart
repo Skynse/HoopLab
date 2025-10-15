@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
 class Clip {
   String id;
@@ -84,11 +85,17 @@ class FrameData {
   int frameNumber;
   double timestamp;
   List<Detection> detections;
+  bool isShootingMotion; // Whether someone is in shooting motion in this frame
+  double shootingConfidence; // Confidence of shooting pose detection (0.0-1.0)
+  List<Pose>? poses; // ML Kit pose data for visualization
 
   FrameData({
     required this.frameNumber,
     required this.timestamp,
     required this.detections,
+    this.isShootingMotion = false,
+    this.shootingConfidence = 0.0,
+    this.poses,
   });
 
   factory FrameData.fromJson(Map<String, dynamic> json) {
