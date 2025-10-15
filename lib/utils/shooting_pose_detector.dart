@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 // Import dart:math for calculations
@@ -22,7 +24,11 @@ class ShootingPoseDetector {
       );
 
   /// Detect poses in an image and return shooting motion status
-  Future<ShootingPoseResult> detectShootingPose(InputImage image) async {
+  /// Optional ballPosition to identify which person is holding the ball
+  Future<ShootingPoseResult> detectShootingPose(
+    InputImage image, {
+    Offset? ballPosition,
+  }) async {
     try {
       final poses = await _poseDetector.processImage(image);
 
@@ -37,15 +43,35 @@ class ShootingPoseDetector {
         );
       }
 
-      // Analyze all detected poses for shooting motion
+      // If ball position is provided, prioritize the person closest to the ball
+      Pose? ballHolderPose;
+      if (ballPosition != null && poses.length > 1) {
+        ballHolderPose = _findBallHolder(poses, ballPosition);
+        if (ballHolderPose != null) {
+          debugPrint('🎯 Ball holder identified among ${poses.length} people');
+        }
+      }
+
+      // Analyze poses for shooting motion
+      // Prioritize ball holder if found, otherwise check all poses
       double maxShootingConfidence = 0.0;
       Pose? shootingPose;
 
-      for (final pose in poses) {
-        final confidence = _analyzeShootingMotion(pose);
-        if (confidence > maxShootingConfidence) {
-          maxShootingConfidence = confidence;
-          shootingPose = pose;
+      if (ballHolderPose != null) {
+        // Only analyze the person holding the ball
+        maxShootingConfidence = _analyzeShootingMotion(ballHolderPose);
+        shootingPose = ballHolderPose;
+        debugPrint(
+          '🏀 Analyzing ball holder: confidence=${maxShootingConfidence.toStringAsFixed(2)}',
+        );
+      } else {
+        // Analyze all poses and pick the one with highest shooting confidence
+        for (final pose in poses) {
+          final confidence = _analyzeShootingMotion(pose);
+          if (confidence > maxShootingConfidence) {
+            maxShootingConfidence = confidence;
+            shootingPose = pose;
+          }
         }
       }
 
@@ -70,7 +96,9 @@ class ShootingPoseDetector {
 
       return ShootingPoseResult(
         isShootingMotion: _isInShootingMotion,
-        poses: poses,
+        poses: shootingPose != null
+            ? [shootingPose]
+            : poses, // Return only ball holder's pose if identified
         shootingConfidence: maxShootingConfidence,
         shootingPose: shootingPose,
         shootingDuration: _shootingStartTime != null
@@ -86,6 +114,69 @@ class ShootingPoseDetector {
         shootingConfidence: 0.0,
       );
     }
+  }
+
+  /// Find which person is holding/closest to the ball
+  Pose? _findBallHolder(List<Pose> poses, Offset ballPosition) {
+    Pose? closestPose;
+    double minDistance = double.infinity;
+
+    for (final pose in poses) {
+      final landmarks = pose.landmarks;
+
+      // Check distance from ball to person's hands (wrists)
+      final rightWrist = landmarks[PoseLandmarkType.rightWrist];
+      final leftWrist = landmarks[PoseLandmarkType.leftWrist];
+
+      double poseDistance = double.infinity;
+
+      // Calculate distance to right hand
+      if (rightWrist != null) {
+        final wristPos = Offset(rightWrist.x, rightWrist.y);
+        final distance = (ballPosition - wristPos).distance;
+        if (distance < poseDistance) {
+          poseDistance = distance;
+        }
+      }
+
+      // Calculate distance to left hand
+      if (leftWrist != null) {
+        final wristPos = Offset(leftWrist.x, leftWrist.y);
+        final distance = (ballPosition - wristPos).distance;
+        if (distance < poseDistance) {
+          poseDistance = distance;
+        }
+      }
+
+      // Also check torso center (for when ball is at chest)
+      final leftShoulder = landmarks[PoseLandmarkType.leftShoulder];
+      final rightShoulder = landmarks[PoseLandmarkType.rightShoulder];
+
+      if (leftShoulder != null && rightShoulder != null) {
+        final torsoCenter = Offset(
+          (leftShoulder.x + rightShoulder.x) / 2,
+          (leftShoulder.y + rightShoulder.y) / 2,
+        );
+        final distance = (ballPosition - torsoCenter).distance;
+        if (distance < poseDistance) {
+          poseDistance = distance;
+        }
+      }
+
+      // Track closest person to ball
+      if (poseDistance < minDistance) {
+        minDistance = poseDistance;
+        closestPose = pose;
+      }
+    }
+
+    // Only consider it a ball holder if within reasonable distance (200 pixels)
+    if (minDistance < 200) {
+      debugPrint('  Ball holder distance: ${minDistance.toStringAsFixed(1)}px');
+      return closestPose;
+    }
+
+    return null;
   }
 
   /// Analyze a pose to determine if it's a basketball shooting motion

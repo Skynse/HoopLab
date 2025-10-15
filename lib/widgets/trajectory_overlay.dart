@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
 import 'package:hooplab/utils/trajectory_prediction.dart';
-import 'package:hooplab/utils/pose_painter.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
 class TrajectoryOverlay extends StatelessWidget {

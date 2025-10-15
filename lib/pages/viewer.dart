@@ -12,12 +12,9 @@ import 'package:ultralytics_yolo/ultralytics_yolo.dart';
 import 'package:pro_video_editor/pro_video_editor.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
-
 import 'package:path/path.dart' as p;
-import 'package:video_thumbnail/video_thumbnail.dart';
 
 class ViewerPage extends StatefulWidget {
   final String? videoPath;
@@ -897,21 +894,6 @@ class _ViewerPageState extends State<ViewerPage> {
     }
   }
 
-  // Safe video seeking using CleanVideoPlayer
-  // Future<void> safeSeekTo(Duration position) async {
-  //   final playerState = _videoPlayerKey.currentState;
-  //   if (playerState != null) {
-  //     try {
-  //       await playerState.seekTo(position);
-  //       debugPrint('✅ Seeked to ${position.inSeconds}s');
-  //     } catch (e) {
-  //       debugPrint('❌ Seek error: $e');
-  //     }
-  //   } else {
-  //     debugPrint('❌ Cannot seek: video player not available');
-  //   }
-  // }
-
   void initializeClip() {
     clip = Clip(
       id: "1",
@@ -1022,20 +1004,38 @@ class _ViewerPageState extends State<ViewerPage> {
           framesProcessed = 0;
         }
 
-        // Run YOLO ball/hoop detection and ML Kit pose detection in parallel
-        final ballDetectionFuture = yoloModel!.predict(
+        // Run YOLO ball/hoop detection first to get ball position
+        final results = await yoloModel!.predict(
           frameBytes,
           confidenceThreshold: 0.25,
         );
 
-        // Create InputImage for ML Kit from file path (JPEG format)
+        // Extract ball position from YOLO results for pose correlation
+        Offset? ballPosition;
+        if (results.containsKey('boxes') && results['boxes'] is List) {
+          final boxes = results['boxes'] as List;
+          for (var box in boxes) {
+            if (box is Map) {
+              final className =
+                  box['class_id']?.toString() ?? box['class']?.toString() ?? '';
+              if (className.toLowerCase().contains('ball')) {
+                final x1 = (box['x1'] ?? 0).toDouble();
+                final y1 = (box['y1'] ?? 0).toDouble();
+                final x2 = (box['x2'] ?? 0).toDouble();
+                final y2 = (box['y2'] ?? 0).toDouble();
+                ballPosition = Offset((x1 + x2) / 2, (y1 + y2) / 2);
+                break;
+              }
+            }
+          }
+        }
+
+        // Run pose detection with ball position for multi-person scenarios
         final inputImage = InputImage.fromFilePath(framePath);
-
-        final poseFuture = poseDetector?.detectShootingPose(inputImage);
-
-        // Wait for both to complete
-        final results = await ballDetectionFuture;
-        final poseResult = await poseFuture;
+        final poseResult = await poseDetector?.detectShootingPose(
+          inputImage,
+          ballPosition: ballPosition,
+        );
 
         debugPrint(
           '🏃 Pose detection: isShootingMotion=${poseResult?.isShootingMotion ?? false}, '
@@ -1045,7 +1045,6 @@ class _ViewerPageState extends State<ViewerPage> {
         // Parse detections from YOLO results
         final frameDetections = <Detection>[];
         int detectionsInFrame = 0;
-        var names = ["ball", "made", "person", "rim", "shoot"];
 
         try {
           if (results.containsKey('boxes') && results['boxes'] is List) {

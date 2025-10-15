@@ -14,7 +14,7 @@ class _CameraPageState extends State<CameraPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: CameraAwesomeBuilder.awesome(
-        saveConfig: SaveConfig.photoAndVideo(),
+        saveConfig: SaveConfig.video(),
 
         onMediaTap: (mediaCapture) {
           Navigator.push(
