@@ -547,12 +547,16 @@ class _ViewerPageState extends State<ViewerPage> {
             // Shooting motion ended, save the shot
             if (currentShotFrames.length >= 10 &&
                 currentShotBallPositions.length >= 5) {
+              // Find target hoop based on ball proximity during this shot
+              final targetHoop =
+                  _findTargetHoop(currentShotFrames) ?? hoopPosition;
+
               final shot = Shot(
                 id: shots.length,
                 frames: List.from(currentShotFrames),
                 startTime: currentShotFrames.first.timestamp,
                 endTime: currentShotFrames.last.timestamp,
-                hoopPosition: hoopPosition,
+                hoopPosition: targetHoop,
               );
 
               // Calculate shot accuracy
@@ -565,7 +569,7 @@ class _ViewerPageState extends State<ViewerPage> {
               final accuracyResult =
                   TrajectoryPredictor.calculateShotAccuracyFromRimCrossing(
                     ballPoints: currentShotBallPositions,
-                    hoopPosition: hoopPosition,
+                    hoopPosition: targetHoop ?? Offset.zero,
                     hoopBBox: hoopBBox,
                     hoopRadius: hoopBBox != null ? hoopBBox.width / 2 : 30.0,
                     frames: currentShotFrames,
@@ -671,6 +675,7 @@ class _ViewerPageState extends State<ViewerPage> {
     return ballPos.dy > downThreshold;
   }
 
+  /// Find hoop position (legacy - just returns first hoop found)
   Offset? _findHoopPosition() {
     for (final frame in clip.frames) {
       final hoopDetections = frame.detections
@@ -688,6 +693,129 @@ class _ViewerPageState extends State<ViewerPage> {
       }
     }
     return null;
+  }
+
+  /// Find the target hoop based on which hoop the ball gets closest to
+  /// during the shot frames (handles multiple hoops in frame)
+  Offset? _findTargetHoop(List<FrameData> shotFrames) {
+    if (shotFrames.isEmpty) return null;
+
+    // Collect all unique hoop positions across shot frames
+    Map<String, List<Offset>> hoopPositions = {};
+
+    for (final frame in shotFrames) {
+      final hoopDetections = frame.detections
+          .where(
+            (d) =>
+                d.label.toLowerCase().contains('hoop') ||
+                d.label.toLowerCase().contains('rim') ||
+                d.label.toLowerCase().contains('basket'),
+          )
+          .toList();
+
+      for (final hoop in hoopDetections) {
+        final hoopPos = Offset(hoop.bbox.centerX, hoop.bbox.centerY);
+
+        // Group hoops by proximity (within 50 pixels = same hoop)
+        bool foundGroup = false;
+        for (final key in hoopPositions.keys) {
+          final existingPositions = hoopPositions[key]!;
+          final avgPos = _averageOffset(existingPositions);
+
+          if ((hoopPos - avgPos).distance < 50) {
+            existingPositions.add(hoopPos);
+            foundGroup = true;
+            break;
+          }
+        }
+
+        if (!foundGroup) {
+          hoopPositions['hoop_${hoopPositions.length}'] = [hoopPos];
+        }
+      }
+    }
+
+    if (hoopPositions.isEmpty) {
+      debugPrint('❌ No hoops detected in shot frames');
+      return null;
+    }
+
+    debugPrint('🎯 Found ${hoopPositions.length} unique hoop(s) in shot');
+
+    // If only one hoop, easy choice
+    if (hoopPositions.length == 1) {
+      final positions = hoopPositions.values.first;
+      return _averageOffset(positions);
+    }
+
+    // Multiple hoops - find which one the ball gets closest to
+    Map<String, double> minDistances = {};
+
+    for (final hoopKey in hoopPositions.keys) {
+      final hoopPositionsList = hoopPositions[hoopKey]!;
+      final avgHoopPos = _averageOffset(hoopPositionsList);
+
+      double minDistance = double.infinity;
+
+      // Check distance from ball to this hoop across all frames
+      for (final frame in shotFrames) {
+        final ballDetections = frame.detections
+            .where((d) => d.label.toLowerCase().contains('ball'))
+            .toList();
+
+        if (ballDetections.isNotEmpty) {
+          final ballPos = Offset(
+            ballDetections.first.bbox.centerX,
+            ballDetections.first.bbox.centerY,
+          );
+
+          final distance = (ballPos - avgHoopPos).distance;
+          if (distance < minDistance) {
+            minDistance = distance;
+          }
+        }
+      }
+
+      minDistances[hoopKey] = minDistance;
+    }
+
+    // Find the hoop with minimum distance to ball
+    String? targetHoopKey;
+    double closestDistance = double.infinity;
+
+    for (final entry in minDistances.entries) {
+      debugPrint(
+        '  Hoop ${entry.key}: min distance = ${entry.value.toStringAsFixed(1)}px',
+      );
+      if (entry.value < closestDistance) {
+        closestDistance = entry.value;
+        targetHoopKey = entry.key;
+      }
+    }
+
+    if (targetHoopKey != null) {
+      final targetHoopPositions = hoopPositions[targetHoopKey]!;
+      final targetPos = _averageOffset(targetHoopPositions);
+      debugPrint(
+        '✅ Target hoop selected at (${targetPos.dx.toInt()}, ${targetPos.dy.toInt()})',
+      );
+      return targetPos;
+    }
+
+    return null;
+  }
+
+  /// Calculate average of a list of offsets
+  Offset _averageOffset(List<Offset> offsets) {
+    if (offsets.isEmpty) return Offset.zero;
+
+    double sumX = 0, sumY = 0;
+    for (final offset in offsets) {
+      sumX += offset.dx;
+      sumY += offset.dy;
+    }
+
+    return Offset(sumX / offsets.length, sumY / offsets.length);
   }
 
   /// Get average hoop bounding box for a frame range
