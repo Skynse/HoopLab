@@ -8,6 +8,7 @@ class TrajectoryOverlay extends StatelessWidget {
   final Duration currentVideoPosition;
   final Size videoSize;
   final bool showPoseSkeleton;
+  final bool isCourtMode;
 
   const TrajectoryOverlay({
     super.key,
@@ -15,6 +16,7 @@ class TrajectoryOverlay extends StatelessWidget {
     required this.currentVideoPosition,
     required this.videoSize,
     this.showPoseSkeleton = false,
+    this.isCourtMode = false,
   });
 
   @override
@@ -27,6 +29,7 @@ class TrajectoryOverlay extends StatelessWidget {
             frames: frames,
             currentVideoPosition: currentVideoPosition,
             videoSize: videoSize,
+            isCourtMode: isCourtMode,
           ),
           size: Size.infinite,
         ),
@@ -49,11 +52,13 @@ class TrajectoryPainter extends CustomPainter {
   final List<FrameData> frames;
   final Duration currentVideoPosition;
   final Size videoSize;
+  final bool isCourtMode; // Court/sideways view vs backboard view
 
   TrajectoryPainter({
     required this.frames,
     required this.currentVideoPosition,
     required this.videoSize,
+    this.isCourtMode = false,
   });
 
   @override
@@ -471,13 +476,21 @@ class TrajectoryPainter extends CustomPainter {
     const horizontalThreshold = 30.0; // pixels
     const verticalThreshold = 50.0; // pixels
 
-    // Horizontal feedback
+    // Horizontal feedback (only for backboard mode, not court/sideways)
     if (horizontalDiff.abs() > horizontalThreshold) {
-      if (horizontalDiff > 0) {
-        horizontalFeedback = 'Aim ${(horizontalDiff / 10).round() * 10}px LEFT';
-      } else {
+      if (isCourtMode) {
+        // Court/sideways view - don't give left/right directions
         horizontalFeedback =
-            'Aim ${(horizontalDiff.abs() / 10).round() * 10}px RIGHT';
+            '🎯 ${(horizontalDiff.abs() / 10).round() * 10}px off center';
+      } else {
+        // Backboard view - left/right makes sense
+        if (horizontalDiff > 0) {
+          horizontalFeedback =
+              'Aim ${(horizontalDiff / 10).round() * 10}px LEFT';
+        } else {
+          horizontalFeedback =
+              'Aim ${(horizontalDiff.abs() / 10).round() * 10}px RIGHT';
+        }
       }
     }
 

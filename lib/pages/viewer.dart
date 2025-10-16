@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hooplab/models/clip.dart';
 import 'package:hooplab/utils/frame_cache.dart';
+import 'package:hooplab/utils/shot_quality_evaluator.dart';
 import 'package:hooplab/widgets/clean_video_player.dart';
 import 'package:hooplab/widgets/trajectory_overlay.dart';
 import 'package:hooplab/utils/trajectory_prediction.dart';
@@ -563,28 +564,32 @@ class _ViewerPageState extends State<ViewerPage> {
                 null,
               );
 
-              // final accuracyResult =
-              //     TrajectoryPredictor.calculateShotAccuracyFromRimCrossing(
-              //       ballPoints: currentShotBallPositions,
-              //       hoopPosition: targetHoop ?? Offset.zero,
-              //       hoopBBox: hoopBBox,
-              //       hoopRadius: hoopBBox != null ? hoopBBox.width / 2 : 30.0,
-              //       frames: currentShotFrames,
-              //     );
-              //
-              //
-              //     // shot.accuracy = accuracyResult.accuracy;
-              // shot.prediction = accuracyResult.accuracy > 50.0
-              //     ? "MAKE"
-              //     : "MISS";
+              // Use rim crossing detection to determine if shot went in
+              final rimCrossingResult =
+                  TrajectoryPredictor.calculateShotAccuracyFromRimCrossing(
+                    ballPoints: currentShotBallPositions,
+                    hoopPosition: hoopPosition ?? Offset.zero,
+                    hoopBBox: hoopBBox,
+                    hoopRadius: hoopBBox != null ? hoopBBox.width / 2 : 30.0,
+                    frames: currentShotFrames,
+                  );
 
-              final accuracyResult = TrajectoryPredictor.calculateShotAccuracy(
-                ballPoints: currentShotBallPositions,
-                hoopPosition: targetHoop,
+              // Also evaluate shot quality/form for additional feedback
+              final qualityResult = ShotQualityEvaluator.evaluateShotQuality(
+                ballTrajectory: currentShotBallPositions,
+                hoopPosition: hoopPosition ?? Offset.zero,
+                hoopRadius: hoopBBox != null ? hoopBBox.width / 2 : 30.0,
               );
 
-              shot.accuracy = accuracyResult;
-              shot.prediction = accuracyResult > 50.0 ? "Good" : "Bad";
+              // Primary metric: rim crossing accuracy (0-100% based on make/miss)
+              shot.accuracy = rimCrossingResult.accuracy;
+
+              // Prediction: MAKE/MISS based on rim crossing + quality feedback
+              if (rimCrossingResult.accuracy > 50.0) {
+                shot.prediction = "MAKE • ${qualityResult.feedback}";
+              } else {
+                shot.prediction = "MISS • ${qualityResult.feedback}";
+              }
 
               print("SHOT ACCURACY: ${shot.accuracy}");
 
@@ -622,23 +627,15 @@ class _ViewerPageState extends State<ViewerPage> {
       );
 
       if (currentShotBallPositions.length >= 5) {
-        final hoopBBox = _getAverageHoopBBox(
-          shootingStartFrame,
-          clip.frames.length - 1,
-          null,
+        // Evaluate shot quality (technique/form)
+        final qualityResult = ShotQualityEvaluator.evaluateShotQuality(
+          ballTrajectory: currentShotBallPositions,
+          hoopPosition: hoopPosition ?? Offset.zero,
+          hoopRadius: 30.0,
         );
 
-        final accuracyResult =
-            TrajectoryPredictor.calculateShotAccuracyFromRimCrossing(
-              ballPoints: currentShotBallPositions,
-              hoopPosition: hoopPosition,
-              hoopBBox: hoopBBox,
-              hoopRadius: hoopBBox != null ? hoopBBox.width / 2 : 30.0,
-              frames: currentShotFrames,
-            );
-
-        shot.accuracy = accuracyResult.accuracy;
-        shot.prediction = accuracyResult.accuracy > 50.0 ? "MAKE" : "MISS";
+        shot.accuracy = qualityResult.overallScore;
+        shot.prediction = qualityResult.feedback;
       }
 
       shots.add(shot);
@@ -905,6 +902,51 @@ class _ViewerPageState extends State<ViewerPage> {
     }
   }
 
+  void _deleteCurrentShot() {
+    if (clip.shots.isEmpty ||
+        currentShotIndex < 0 ||
+        currentShotIndex >= clip.shots.length) {
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Shot'),
+        content: Text(
+          'Delete shot ${currentShotIndex + 1}? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              setState(() {
+                clip.shots.removeAt(currentShotIndex);
+
+                // Adjust currentShotIndex after deletion
+                if (clip.shots.isEmpty) {
+                  currentShotIndex = -1;
+                } else if (currentShotIndex >= clip.shots.length) {
+                  currentShotIndex = clip.shots.length - 1;
+                }
+
+                debugPrint(
+                  '🗑️ Shot deleted. ${clip.shots.length} shots remaining',
+                );
+              });
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void initializeClip() {
     clip = Clip(
       id: "1",
@@ -1166,6 +1208,7 @@ class _ViewerPageState extends State<ViewerPage> {
                   _videoPlayerKey.currentState?.videoSize ??
                   const Size(1920, 1080),
               showPoseSkeleton: showPoseSkeleton,
+              isCourtMode: useCourtMode,
             )
           : null,
     );
@@ -1523,23 +1566,47 @@ class _ViewerPageState extends State<ViewerPage> {
                                     color: const Color(0xFF1565C0),
                                     iconSize: 28,
                                   ),
-                                  Column(
-                                    children: [
-                                      Text(
-                                        'Shot ${currentShotIndex + 1} of ${clip.shots.length}',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
+                                  Expanded(
+                                    child: Column(
+                                      children: [
+                                        Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Text(
+                                              'Shot ${currentShotIndex + 1} of ${clip.shots.length}',
+                                              style: const TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            // Delete button
+                                            IconButton(
+                                              icon: const Icon(
+                                                Icons.delete_outline,
+                                                size: 20,
+                                              ),
+                                              color: Colors.red,
+                                              padding: EdgeInsets.zero,
+                                              constraints:
+                                                  const BoxConstraints(),
+                                              onPressed: () {
+                                                _deleteCurrentShot();
+                                              },
+                                              tooltip: 'Delete this shot',
+                                            ),
+                                          ],
                                         ),
-                                      ),
-                                      Text(
-                                        '${clip.shots[currentShotIndex].startTime.toStringAsFixed(1)}s - ${clip.shots[currentShotIndex].endTime.toStringAsFixed(1)}s',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey[600],
+                                        Text(
+                                          '${clip.shots[currentShotIndex].startTime.toStringAsFixed(1)}s - ${clip.shots[currentShotIndex].endTime.toStringAsFixed(1)}s',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey[600],
+                                          ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                   IconButton(
                                     onPressed:
