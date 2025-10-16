@@ -111,7 +111,7 @@ class _MethodSelectorState extends State<MethodSelector>
     } catch (e) {
       // Handle errors gracefully
       if (mounted) {
-        _showErrorSnackBar('Failed to select video from gallery');
+        _showErrorSnackBar('$e');
       }
     } finally {
       if (mounted) {

@@ -9,3 +9,5 @@
     @com.fasterxml.jackson.annotation.* <fields>;
     @com.fasterxml.jackson.annotation.* <methods>;
 }
+
+-keep class org.xmlpull.** { *; }

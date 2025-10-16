@@ -167,37 +167,61 @@ class TrajectoryPredictor {
     return willMake;
   }
 
-  /// Calculate shot accuracy percentage based on trajectory
   static double calculateShotAccuracy({
     required List<Offset> ballPoints,
     required Offset hoopPosition,
+    int normalizedLength = 30,
   }) {
     if (ballPoints.isEmpty) return 0.0;
 
-    final predictedPath = predictTrajectory(
+    // Generate ideal trajectory
+    final idealPath = predictCorrectedArc(
       ballPoints: ballPoints,
       hoopPosition: hoopPosition,
+      predictionSteps: normalizedLength,
     );
 
-    if (predictedPath.isEmpty) return 0.0;
+    if (idealPath.isEmpty) return 0.0;
 
-    // Find closest predicted point to hoop
-    double closestDistance = double.infinity;
-    for (final point in predictedPath) {
-      final distance = (point - hoopPosition).distance;
-      if (distance < closestDistance) {
-        closestDistance = distance;
+    // Normalize actual trajectory to same length
+    final normalizedActual = _normalizePath(ballPoints, normalizedLength);
+
+    // Now both paths have exactly the same number of points
+    final similarity = PathSimilarity.similarityPercentage(
+      normalizedActual,
+      idealPath,
+    );
+
+    return similarity;
+  }
+
+  /// Helper: Resample a path to have exactly N points
+  static List<Offset> _normalizePath(List<Offset> path, int targetLength) {
+    if (path.isEmpty) return [];
+    if (path.length == targetLength) return path;
+    if (path.length == 1) return List.filled(targetLength, path[0]);
+
+    List<Offset> normalized = [];
+
+    for (int i = 0; i < targetLength; i++) {
+      // Calculate position along the path (0.0 to 1.0)
+      final t = i / (targetLength - 1);
+
+      // Find which segment of the original path we're in
+      final segmentIndex = (t * (path.length - 1)).floor();
+      final segmentT = (t * (path.length - 1)) - segmentIndex;
+
+      if (segmentIndex >= path.length - 1) {
+        normalized.add(path.last);
+      } else {
+        // Interpolate between two points
+        final point1 = path[segmentIndex];
+        final point2 = path[segmentIndex + 1];
+        normalized.add(Offset.lerp(point1, point2, segmentT)!);
       }
     }
 
-    // Convert distance to accuracy percentage (closer = higher accuracy)
-    const maxDistance = 100.0; // pixels
-    final accuracy = ((maxDistance - closestDistance) / maxDistance).clamp(
-      0.0,
-      1.0,
-    );
-
-    return accuracy * 100; // Return as percentage
+    return normalized;
   }
 
   /// Calculate shot accuracy as percentage (0-100%)
@@ -503,4 +527,80 @@ class ShotAccuracyResult {
 
   bool get isReliable =>
       confidence == ShotConfidence.high || confidence == ShotConfidence.medium;
+}
+
+class PathSimilarity {
+  /// Calculate Euclidean distance between two offsets
+  static double _euclideanDistance(Offset p1, Offset p2) {
+    final dx = p1.dx - p2.dx;
+    final dy = p1.dy - p2.dy;
+    return sqrt(dx * dx + dy * dy);
+  }
+
+  /// Calculate Fréchet distance between two paths
+  static double frechetDistance(List<Offset> path1, List<Offset> path2) {
+    final n = path1.length;
+    final m = path2.length;
+
+    // Create memoization matrix
+    final ca = List.generate(n, (_) => List.filled(m, -1.0));
+
+    double computeCa(int i, int j) {
+      if (ca[i][j] > -1) {
+        return ca[i][j];
+      }
+
+      final dist = _euclideanDistance(path1[i], path2[j]);
+
+      if (i == 0 && j == 0) {
+        ca[i][j] = dist;
+      } else if (i > 0 && j == 0) {
+        ca[i][j] = max(computeCa(i - 1, 0), dist);
+      } else if (i == 0 && j > 0) {
+        ca[i][j] = max(computeCa(0, j - 1), dist);
+      } else {
+        ca[i][j] = max(
+          min(
+            min(computeCa(i - 1, j), computeCa(i - 1, j - 1)),
+            computeCa(i, j - 1),
+          ),
+          dist,
+        );
+      }
+
+      return ca[i][j];
+    }
+
+    return computeCa(n - 1, m - 1);
+  }
+
+  /// Calculate similarity percentage (0-100%)
+  static double similarityPercentage(List<Offset> path1, List<Offset> path2) {
+    if (path1.isEmpty || path2.isEmpty) {
+      return 0.0;
+    }
+
+    final distance = frechetDistance(path1, path2);
+
+    // Calculate max possible distance (diagonal of bounding box)
+    final allPoints = [...path1, ...path2];
+    final xs = allPoints.map((p) => p.dx).toList();
+    final ys = allPoints.map((p) => p.dy).toList();
+
+    final minX = xs.reduce(min);
+    final maxX = xs.reduce(max);
+    final minY = ys.reduce(min);
+    final maxY = ys.reduce(max);
+
+    final maxDistance = sqrt(pow(maxX - minX, 2) + pow(maxY - minY, 2));
+
+    // Avoid division by zero
+    if (maxDistance == 0) {
+      return 100.0;
+    }
+
+    // Convert to similarity percentage
+    final similarity = max(0.0, 100 * (1 - distance / maxDistance));
+    return similarity;
+  }
 }

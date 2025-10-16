@@ -563,19 +563,30 @@ class _ViewerPageState extends State<ViewerPage> {
                 null,
               );
 
-              final accuracyResult =
-                  TrajectoryPredictor.calculateShotAccuracyFromRimCrossing(
-                    ballPoints: currentShotBallPositions,
-                    hoopPosition: targetHoop ?? Offset.zero,
-                    hoopBBox: hoopBBox,
-                    hoopRadius: hoopBBox != null ? hoopBBox.width / 2 : 30.0,
-                    frames: currentShotFrames,
-                  );
+              // final accuracyResult =
+              //     TrajectoryPredictor.calculateShotAccuracyFromRimCrossing(
+              //       ballPoints: currentShotBallPositions,
+              //       hoopPosition: targetHoop ?? Offset.zero,
+              //       hoopBBox: hoopBBox,
+              //       hoopRadius: hoopBBox != null ? hoopBBox.width / 2 : 30.0,
+              //       frames: currentShotFrames,
+              //     );
+              //
+              //
+              //     // shot.accuracy = accuracyResult.accuracy;
+              // shot.prediction = accuracyResult.accuracy > 50.0
+              //     ? "MAKE"
+              //     : "MISS";
 
-              shot.accuracy = accuracyResult.accuracy;
-              shot.prediction = accuracyResult.accuracy > 50.0
-                  ? "MAKE"
-                  : "MISS";
+              final accuracyResult = TrajectoryPredictor.calculateShotAccuracy(
+                ballPoints: currentShotBallPositions,
+                hoopPosition: targetHoop,
+              );
+
+              shot.accuracy = accuracyResult;
+              shot.prediction = accuracyResult > 50.0 ? "Good" : "Bad";
+
+              print("SHOT ACCURACY: ${shot.accuracy}");
 
               shots.add(shot);
               debugPrint(
@@ -1557,6 +1568,7 @@ class _ViewerPageState extends State<ViewerPage> {
                                 ],
                               ),
                               const SizedBox(height: 8),
+
                               // Current shot accuracy display
                               if (clip.shots[currentShotIndex].accuracy != null)
                                 Container(
