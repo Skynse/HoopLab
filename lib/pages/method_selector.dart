@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:hooplab/pages/camera.dart';
 import 'package:hooplab/pages/live_shot_detector.dart';
 import 'package:hooplab/pages/viewer.dart' as viewer;
-import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pro_image_editor/pro_image_editor.dart';
 import 'package:pro_video_editor/pro_video_editor.dart';
@@ -20,7 +20,6 @@ class MethodSelector extends StatefulWidget {
 class _MethodSelectorState extends State<MethodSelector>
     with SingleTickerProviderStateMixin {
   bool _isLoading = false;
-  final ImagePicker _picker = ImagePicker();
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
 
@@ -74,26 +73,26 @@ class _MethodSelectorState extends State<MethodSelector>
     _setLoading(true);
 
     try {
-      final XFile? video = await _picker.pickVideo(
-        source: ImageSource.gallery,
-        maxDuration: const Duration(
-          minutes: 10,
-        ), // Optional: limit video length
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.video,
+        allowMultiple: false,
       );
 
-      if (video != null && mounted) {
+      if (result != null && result.files.single.path != null && mounted) {
+        final videoPath = result.files.single.path!;
+
         // Navigate to trimmer first
         final TrimDurationSpan? trimResult = await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => VideoTrimmer(originalVideoPath: video.path),
+            builder: (context) => VideoTrimmer(originalVideoPath: videoPath),
           ),
         );
 
         if (trimResult != null && mounted) {
           // Generate trimmed video
           final trimmedPath = await _generateTrimmedVideo(
-            video.path,
+            videoPath,
             trimResult,
           );
 

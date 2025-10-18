@@ -16,8 +16,8 @@ if (keystorePropertiesFile.exists()) {
 }
 android {
     namespace = "com.derekli.hooplab"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = "28.0.13004108"
+    compileSdk = 36
+    ndkVersion =  "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -58,11 +58,7 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
-
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+getDefaultProguardFile("proguard-android-optimize.txt")
         }
     }
 }
