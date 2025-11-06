@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:hooplab/pages/camera.dart';
 import 'package:hooplab/pages/live_shot_detector.dart';
 import 'package:hooplab/pages/viewer.dart' as viewer;
-import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pro_image_editor/pro_image_editor.dart';
 import 'package:pro_video_editor/pro_video_editor.dart';
@@ -73,13 +73,10 @@ class _MethodSelectorState extends State<MethodSelector>
     _setLoading(true);
 
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.video,
-        allowMultiple: false,
-      );
+      final result = await ImagePicker().pickVideo(source: ImageSource.gallery);
 
-      if (result != null && result.files.single.path != null && mounted) {
-        final videoPath = result.files.single.path!;
+      if (result != null && result.path != null && mounted) {
+        final videoPath = result.path;
 
         // Navigate to trimmer first
         final TrimDurationSpan? trimResult = await Navigator.push(

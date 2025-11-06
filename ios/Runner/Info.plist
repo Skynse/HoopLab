@@ -46,9 +46,9 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-<string>You can take photos to document your job.</string>
+<string>The app requires access to your camera to take videos</string>
 <key>NSPhotoLibraryUsageDescription</key>
-<string>You can select photos to attach to reports.</string>
+<string>Hooplab requires access to your gallery to load videos</string>
 <key>NSMicrophoneUsageDescription</key>
 <string>The application does not use this feature</string>
 <!-- Enable Neural Engine -->

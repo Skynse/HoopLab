@@ -1,6 +1,6 @@
-# Keep Flutter core classes
--keep class io.flutter.app.** { *; }
-# Flutter core - must keep everything
+# ===========================
+# Flutter Core
+# ===========================
 -keep class io.flutter.app.** { *; }
 -keep class io.flutter.plugin.** { *; }
 -keep class io.flutter.util.** { *; }
@@ -9,83 +9,95 @@
 -keep class io.flutter.plugins.** { *; }
 -keep class io.flutter.embedding.** { *; }
 
-# Keep file_picker plugin
--keep class com.mr.flutter.plugin.filepicker.** { *; }
--keep class androidx.lifecycle.** { *; }
+# ===========================
+# Flutter Plugin System
+# ===========================
+# Keep all Flutter plugin registrants
+-keep class io.flutter.plugins.GeneratedPluginRegistrant { *; }
+-keep class * extends io.flutter.embedding.engine.plugins.FlutterPlugin { *; }
+-keep class * implements io.flutter.embedding.engine.plugins.FlutterPlugin { *; }
+-keepclassmembers class * implements io.flutter.embedding.engine.plugins.FlutterPlugin { *; }
 
-# Keep camerawesome plugin
--keep class com.apparence.camerawesome.** { *; }
+# Keep plugin registration attributes (critical for reflection)
+-keepattributes *Annotation*
+-keepattributes Signature
+-keepattributes InnerClasses
+-keepattributes EnclosingMethod
 
-# Keep AndroidX classes
--keep class androidx.** { *; }
--keep interface androidx.** { *; }
--dontwarn androidx.**
-
-# Keep Activity Result API (required by file_picker)
--keep class androidx.activity.result.** { *; }
-# DO NOT obfuscate MethodChannel implementations
+# ===========================
+# MethodChannel System
+# ===========================
+-keep class io.flutter.plugin.common.MethodChannel { *; }
+-keep class io.flutter.plugin.common.MethodChannel$** { *; }
+-keep class io.flutter.plugin.common.MethodCall { *; }
 -keep class * implements io.flutter.plugin.common.MethodChannel$MethodCallHandler {
     public void onMethodCall(...);
 }
-
-# Keep all MethodChannel.Result implementations
 -keep class * implements io.flutter.plugin.common.MethodChannel$Result { *; }
 
-# file_picker - keep EVERYTHING
--keep class com.mr.flutter.plugin.filepicker.** { *; }
--keepclassmembers class com.mr.flutter.plugin.filepicker.** { *; }
+# ===========================
+# image_picker Plugin
+# ===========================
+-keep class io.flutter.plugins.imagepicker.** { *; }
 
-# camerawesome plugin
--keep class com.apparence.camerawesome.** { *; }
+# ===========================
+# AndroidX Lifecycle
+# ===========================
+-keep class androidx.lifecycle.DefaultLifecycleObserver { *; }
+-keep class androidx.lifecycle.LifecycleOwner { *; }
+-keep class androidx.lifecycle.** { *; }
+-keep interface androidx.lifecycle.** { *; }
 
-# AndroidX - required by file_picker
--keep class androidx.** { *; }
--keep interface androidx.** { *; }
--dontwarn androidx.**
-
-# Activity Result API (required by file_picker)
+# ===========================
+# AndroidX Activity Result API
+# ===========================
 -keep class androidx.activity.result.** { *; }
 -keep class androidx.activity.** { *; }
 -keep class androidx.fragment.** { *; }
--keep class androidx.lifecycle.** { *; }
 
-# Keep native methods
+# ===========================
+# AndroidX Core (general)
+# ===========================
+-keep class androidx.core.** { *; }
+-keep class androidx.annotation.** { *; }
+-keep interface androidx.** { *; }
+-dontwarn androidx.**
+
+# ===========================
+# camera Plugin
+# ===========================
+-keep class io.flutter.plugins.camera.** { *; }
+
+# ===========================
+# Native Methods
+# ===========================
 -keepclasseswithmembernames,includedescriptorclasses class * {
     native <methods>;
 }
 
-# Keep methods called from native code
+# ===========================
+# WebView JavaScript Interface
+# ===========================
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }
 
+# ===========================
 # Gson (if used by plugins)
--keepattributes Signature
--keepattributes *Annotation*
--dontwarn sun.misc.**
+# ===========================
 -keep class com.google.gson.** { *; }
 -keep class * implements com.google.gson.TypeAdapterFactory
 -keep class * implements com.google.gson.JsonSerializer
 -keep class * implements com.google.gson.JsonDeserializer
+-dontwarn sun.misc.**
 
-# Keep all model classes
+# ===========================
+# Enums
+# ===========================
 -keep class * extends java.lang.Enum { *; }
 
-# Suppress warnings
-# Keep all Flutter plugin registrants
--keep class io.flutter.plugins.GeneratedPluginRegistrant { *; }
--keep class * extends io.flutter.embedding.engine.plugins.FlutterPlugin { *; }
-
-# Keep native methods
--keepclasseswithmembernames,includedescriptorclasses class * {
-    native <methods>;
-}
-
-# Keep MethodChannel and related classes
--keep class io.flutter.plugin.common.MethodChannel { *; }
--keep class io.flutter.plugin.common.MethodChannel$** { *; }
--keep class io.flutter.plugin.common.MethodCall { *; }
-
-# Suppress warnings
+# ===========================
+# Suppress Common Warnings
+# ===========================
 -dontwarn com.google.android.play.core.**
 -dontwarn java.beans.**
