@@ -46,11 +46,11 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-<string>The app requires access to your camera to take videos</string>
+<string>The app requires access to your camera to take shot videos</string>
 <key>NSPhotoLibraryUsageDescription</key>
-<string>Hooplab requires access to your gallery to load videos</string>
+<string>Hooplab requires access to your gallery to analyze basketball shots</string>
 <key>NSMicrophoneUsageDescription</key>
-<string>The application does not use this feature</string>
+<string>When videos are recorded, microphone audio is captured, but not used for analysis</string>
 <!-- Enable Neural Engine -->
 <key>UIRequiredDeviceCapabilities</key>
 <array>
