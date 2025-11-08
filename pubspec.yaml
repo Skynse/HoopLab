@@ -37,7 +37,7 @@ dependencies:
   path_provider: ^2.1.5
   camera: ^0.11.3
   image_picker: ^1.2.0
-  better_player_plus: ^1.1.0
+  better_player_plus: ^1.1.2
   wakelock_plus: ^1.4.0
   pro_video_editor: ^0.3.0
   video_player: ^2.10.0
