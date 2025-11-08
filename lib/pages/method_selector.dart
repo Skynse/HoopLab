@@ -282,8 +282,6 @@ class _MethodSelectorState extends State<MethodSelector>
                         return Row(
                           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                           children: [
-                            Expanded(child: _buildLiveDetectionButton(theme)),
-                            const SizedBox(width: _buttonSpacing),
                             Expanded(child: _buildCameraButton(theme)),
                             const SizedBox(width: _buttonSpacing),
                             Expanded(child: _buildGalleryButton(theme)),
@@ -292,8 +290,6 @@ class _MethodSelectorState extends State<MethodSelector>
                       } else {
                         return Column(
                           children: [
-                            // _buildLiveDetectionButton(theme),
-                            // const SizedBox(height: _buttonSpacing),
                             _buildCameraButton(theme),
                             const SizedBox(height: _buttonSpacing),
                             _buildGalleryButton(theme),
