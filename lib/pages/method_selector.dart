@@ -249,7 +249,7 @@ class _MethodSelectorState extends State<MethodSelector>
                             ],
                           ),
                           const SizedBox(height: 12),
-                          _buildTip('📹', 'Have BACKBOARD in view'),
+                          _buildTip('📹', 'Use at least 4 seconds of footage'),
                           const SizedBox(height: 6),
                           _buildTip(
                             '🏀',
@@ -265,7 +265,7 @@ class _MethodSelectorState extends State<MethodSelector>
                           const SizedBox(height: 6),
                           _buildTip(
                             '📏',
-                            'Film from side angle (45°) for best tracking',
+                            'Best results when hoop is almost parallel to camera',
                           ),
                         ],
                       ),
